@@ -79,11 +79,22 @@ window.__ModuleLoader__.load({
 }
 .gcf-tracking {
   flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 11px;
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary, #8a8a8a);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+.gcf-tracking .gcf-upstream {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gcf-ahead { color: var(--dsw-alias-file-diff-added-marker, #1f9a63); }
+.gcf-behind { color: var(--dsw-alias-file-diff-deleted-marker, #c3514a); }
 .gcf-status {
   flex: none;
   margin-left: auto;
@@ -191,8 +202,8 @@ window.__ModuleLoader__.load({
   gap: 6px;
   font-variant-numeric: tabular-nums;
 }
-.gcf-diff b { font-weight: 500; color: var(--dsw-alias-state-success-primary, #1f9a63); }
-.gcf-diff em { font-style: normal; color: var(--dsw-alias-state-error-primary, #c3514a); }
+.gcf-diff b { font-weight: 500; color: var(--dsw-alias-file-diff-added-marker, #1f9a63); }
+.gcf-diff em { font-style: normal; color: var(--dsw-alias-file-diff-deleted-marker, #c3514a); }
 .gcf-counts {
   display: inline-flex;
   gap: 10px;
@@ -219,15 +230,6 @@ window.__ModuleLoader__.load({
 }
 .gcf-action:disabled { opacity: 0.55; cursor: default; }
 .gcf-action:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4a7fdc); outline-offset: 1px; }
-.gcf-hint {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: 12px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-tertiary, #8a8a8a);
-}
 .gcf-label {
   flex: none;
   font-size: 13px;
@@ -242,7 +244,8 @@ window.__ModuleLoader__.load({
       'app.title': 'Git 工作流',
       'branch.detached': '游离 HEAD @ {oid}',
       'branch.unknown': '未知分支',
-      'branch.tracking': '{upstream} +{ahead} −{behind}',
+      'tracking.ahead': '领先上游的提交数',
+      'tracking.behind': '落后上游的提交数',
       'status.clean': '干净',
       'status.changes': '{n} 处变更',
       'status.conflicts': '{n} 处冲突',
@@ -268,7 +271,8 @@ window.__ModuleLoader__.load({
       'app.title': 'Git workflow',
       'branch.detached': 'detached HEAD @ {oid}',
       'branch.unknown': 'unknown branch',
-      'branch.tracking': '{upstream} +{ahead} −{behind}',
+      'tracking.ahead': '领先上游的提交数',
+      'tracking.behind': '落后上游的提交数',
       'status.clean': 'Clean',
       'status.changes': '{n} changes',
       'status.conflicts': '{n} conflicts',
@@ -348,6 +352,17 @@ window.__ModuleLoader__.load({
       return view.branch.name ?? t('branch.unknown');
     }
 
+    function Tracking({ view, t }) {
+      if (view.branch.upstream === null) return null;
+      return h(
+        'span',
+        { className: 'gcf-tracking', 'data-gcf': 'tracking' },
+        h('span', { className: 'gcf-upstream' }, view.branch.upstream),
+        h('span', { className: 'gcf-ahead', title: t('tracking.ahead') }, `+${view.branch.ahead}`),
+        h('span', { className: 'gcf-behind', title: t('tracking.behind') }, `\u2212${view.branch.behind}`),
+      );
+    }
+
     function Row({ row, t, now }) {
       if (row.kind === 'working') {
         return h(
@@ -374,14 +389,6 @@ window.__ModuleLoader__.load({
     }
 
     function CleanBar({ view, t }) {
-      const tracking =
-        view.branch.upstream === null
-          ? null
-          : format(t, 'branch.tracking', {
-              upstream: view.branch.upstream,
-              ahead: view.branch.ahead,
-              behind: view.branch.behind,
-            });
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
@@ -390,7 +397,7 @@ window.__ModuleLoader__.load({
           { className: 'gcf-bar', 'data-gcf': 'bar', 'data-phase': 'clean' },
           h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
           h('span', { className: 'gcf-label' }, branchText(view, t)),
-          tracking === null ? null : h('span', { className: 'gcf-hint' }, tracking),
+          h(Tracking, { view, t }),
           h('span', { className: 'gcf-status', style: { marginLeft: 'auto' } }, h('i', null), t('status.clean')),
         ),
       );
@@ -400,15 +407,6 @@ window.__ModuleLoader__.load({
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') return null;
       if (view.phase === 'clean') return h(CleanBar, { view, t });
-
-      const tracking =
-        view.branch.upstream === null
-          ? null
-          : format(t, 'branch.tracking', {
-              upstream: view.branch.upstream,
-              ahead: view.branch.ahead,
-              behind: view.branch.behind,
-            });
 
       const counts = [
         view.counts.staged > 0 ? format(t, 'foot.staged', { n: view.counts.staged }) : null,
@@ -432,7 +430,7 @@ window.__ModuleLoader__.load({
             { className: 'gcf-head' },
             h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
             h('span', { className: 'gcf-title', title: branchText(view, t) }, branchText(view, t)),
-            tracking === null ? null : h('span', { className: 'gcf-tracking' }, tracking),
+            h(Tracking, { view, t }),
             h('span', { className: 'gcf-status' }, h('i', null), statusText(view, t)),
           ),
           h(

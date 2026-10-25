@@ -203,6 +203,8 @@ const clean = render(cleanView);
 check(clean.includes('gcf-bar') && !clean.includes('gcf-card'), 'clean renders the slim bar, not the card');
 check(clean.includes('status.clean'), 'clean renders its status label');
 check(clean.includes('feat/x'), 'clean renders the branch name');
+check(clean.includes('gcf-ahead') && clean.includes('+1'), 'clean colours the ahead count');
+check(clean.includes('gcf-behind') && clean.includes('−0'), 'clean colours the behind count');
 
 const dirty = render(dirtyView);
 check(dirty.includes('gcf-card'), 'dirty renders the card');
