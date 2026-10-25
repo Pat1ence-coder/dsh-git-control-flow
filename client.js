@@ -103,6 +103,39 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** Ring with a halo ripple (video 3.0s): SVG geometry, so it is always a circle. */
+    function Spinner() {
+      return h(
+        'svg',
+        {
+          className: 'gcf-spinner',
+          width: 14,
+          height: 14,
+          viewBox: '0 0 14 14',
+          'aria-hidden': true,
+          focusable: false,
+        },
+        h('circle', {
+          className: 'gcf-spinner-halo',
+          cx: 7,
+          cy: 7,
+          r: 4.2,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+        }),
+        h('circle', {
+          className: 'gcf-spinner-core',
+          cx: 7,
+          cy: 7,
+          r: 4.2,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2,
+        }),
+      );
+    }
+
     /** In-flight write: waiting for the approval dialog, or running after it was allowed. */
     function PendingLine({ pending, t }) {
       if (pending === null || pending === undefined) return null;
@@ -110,7 +143,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: `gcf-pending is-${pending.phase}`, 'data-gcf': 'pending' },
-        h('span', { className: 'gcf-spinner', 'aria-hidden': true }),
+        h(Spinner),
         h('span', { className: 'gcf-pending-label' }, label),
         typeof pending.reason === 'string' && pending.reason !== ''
           ? h('span', { className: 'gcf-pending-reason', title: pending.reason }, pending.reason)
@@ -159,6 +192,8 @@ window.__ModuleLoader__.load({
       };
 
       const pending = view?.pending ?? { phase: 'awaiting-approval', action: null, reason: reason === '' ? null : reason };
+      const approvalRows = view === null ? [] : [...view.rows];
+      const approvalHeight = approvalRows.length * ROW_HEIGHT;
 
       return h(
         'div',
@@ -181,12 +216,17 @@ window.__ModuleLoader__.load({
               ),
           h(PendingLine, { pending, t }),
           reason !== '' ? h('div', { className: 'gcf-approval-reason' }, reason) : null,
-          view !== null && Array.isArray(view.rows)
+          view !== null && approvalRows.length > 0
             ? h(
                 'div',
-                { className: 'gcf-rows', 'data-gcf': 'rows' },
-                view.rows.map((row, index) =>
-                  h(Row, { key: row.id, row, t, now: Date.now(), index, scramble: false }),
+                { className: 'gcf-graph', style: { height: `${approvalHeight}px` } },
+                h(GraphRail, { rows: approvalRows, edges: view.edges ?? [] }),
+                h(
+                  'div',
+                  { className: 'gcf-rows', 'data-gcf': 'rows' },
+                  approvalRows.map((row, index) =>
+                    h(Row, { key: row.id, row, t, now: Date.now(), index, total: approvalRows.length }),
+                  ),
                 ),
               )
             : null,
@@ -257,10 +297,11 @@ window.__ModuleLoader__.load({
 }
 .gcf-body.is-open { grid-template-rows: 1fr; }
 .gcf-body-inner { min-height: 0; overflow: hidden; }
+.gcf-body.is-open .gcf-body-inner { max-height: 42vh; overflow-y: auto; overscroll-behavior: contain; }
 .gcf-reveal {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 500ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: grid-template-rows 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .gcf-reveal.is-open { grid-template-rows: 1fr; }
 .gcf-reveal-inner { min-height: 0; overflow: hidden; }
@@ -347,37 +388,101 @@ window.__ModuleLoader__.load({
 }
 .gcf-spinner {
   flex: none;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  border-top-color: transparent;
-  animation: gcf-spin 800ms linear infinite;
+  display: block;
+  overflow: visible;
+  color: inherit;
 }
-@keyframes gcf-spin {
-  to { transform: rotate(360deg); }
+.gcf-row--working .gcf-spinner { color: var(--gcf-node, #4a7fdc); }
+.gcf-spinner-core {
+  transform-origin: 7px 7px;
+  animation: gcf-breathe 1.8s ease-in-out infinite;
+}
+.gcf-spinner-halo {
+  transform-origin: 7px 7px;
+  animation: gcf-ripple 1.8s ease-out infinite;
+}
+@keyframes gcf-breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes gcf-ripple {
+  0% { transform: scale(1); opacity: 0.55; }
+  70%, 100% { transform: scale(1.15); opacity: 0; }
+}
+.gcf-graph { position: relative; overflow: visible; }
+.gcf-graph > .gcf-rows {
+  position: absolute;
+  inset: 0;
 }
 .gcf-rows {
-  max-height: 38vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   overscroll-behavior: contain;
   padding: 2px 6px 6px;
 }
 .gcf-row {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
-  padding: 0 8px 0 6px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 8px 0 61px;
   border-radius: 6px;
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary, #1d1d1f);
 }
-.gcf-row:hover { background: var(--dsw-alias-bg-layer-2, #f6f6f6); }
-.gcf-rail { flex: none; display: block; }
+.gcf-graph > .gcf-rows > .gcf-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  /* The rail owns the first 61px; keep the text column clear of the nodes. */
+  padding: 0 8px 0 61px;
+  transform: translateY(var(--y, 0));
+  transition: transform 320ms var(--ease, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+/* Hover paint starts after the rail column so it never hides a node. */
+.gcf-row::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 2px 6px 2px 52px;
+  border-radius: 6px;
+  background: transparent;
+  pointer-events: none;
+}
+.gcf-row:hover::before { background: var(--soft, #f5f5f5); }
+.gcf-rail { position: absolute; left: 0; top: 0; display: block; overflow: visible; }
+.gcf-edge {
+  fill: none;
+  stroke-width: 1.5;
+  stroke: var(--base-line, #dedede);
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: gcf-draw 700ms var(--ease, cubic-bezier(0.2, 0.8, 0.2, 1)) both 100ms;
+}
+.gcf-edge.t-ours { stroke: var(--blue-line, #c6d6f2); }
+.gcf-edge.t-other { stroke: var(--teal-line, #bde9dc); }
+.gcf-edge.t-merged { stroke: var(--merged-line, #cfbdf8); }
+.gcf-edge.t-warn { stroke: var(--warn-line, #ecc68a); }
+.gcf-edge.t-ok { stroke: var(--ok-line, #a8e0c0); }
+.gcf-node { --c: var(--base, #bdbdbd); }
+.gcf-node.t-ours { --c: var(--blue, #4a7fdc); }
+.gcf-node.t-other { --c: var(--teal, #22c4a0); }
+.gcf-node.t-merged { --c: var(--merged, #8b5cf6); }
+.gcf-node.t-warn { --c: var(--warn, #e3a21a); }
+.gcf-node.t-ok { --c: var(--ok, #2fb46c); }
+.gcf-n-dot { fill: var(--c); }
+@keyframes gcf-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
 .gcf-rail-wait {
   flex: none;
+  overflow: visible;
   width: 16px;
   display: inline-flex;
   align-items: center;
@@ -403,8 +508,8 @@ window.__ModuleLoader__.load({
 .gcf-pill.is-remote { background: #e6f4f1; color: #2f9e8f; }
 .gcf-pill.is-tag { background: #fdf3e2; color: #b07a2a; }
 .gcf-row {
-  animation: gcf-row-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  animation-delay: calc(var(--gcf-i, 0) * 24ms);
+  animation: gcf-row-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--rev, 0) * 45ms + 120ms);
 }
 .gcf-swap {
   animation: gcf-decode 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -436,8 +541,8 @@ window.__ModuleLoader__.load({
 .gcf-check.is-pending { color: var(--dsw-alias-label-tertiary, #8a8a8a); }
 .gcf-check-label { white-space: nowrap; }
 @keyframes gcf-row-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: 0 0; }
 }
 .gcf-dot {
   position: absolute;
@@ -589,6 +694,7 @@ window.__ModuleLoader__.load({
 }
 .gcf-foot-state.is-conflicts { color: var(--dsw-alias-state-error-primary, #c0394b); }
 .gcf-foot-state.is-clean { color: var(--dsw-alias-state-success-primary, #2e8f55); }
+.gcf-card[data-gcf='repositories'] .gcf-rows { padding: 2px 6px 6px; }
 .gcf-repo-row {
   display: flex;
   align-items: center;
@@ -598,8 +704,8 @@ window.__ModuleLoader__.load({
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary, #1d1d1f);
-  animation: gcf-row-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  animation-delay: calc(var(--gcf-i, 0) * 24ms);
+  animation: gcf-row-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--rev, 0) * 45ms + 120ms);
 }
 .gcf-repo-row:hover { background: var(--dsw-alias-bg-layer-2, #f6f6f6); }
 .gcf-repo-name {
@@ -762,6 +868,124 @@ body[data-ds-dark-theme] .gcf-dock {
   --gcf-node-warn-ring: #e3a21a2e;
   --gcf-rail: #33405c;
 }
+/* ---- Replica pass: values measured from media/thread.css ---- */
+.gcf-dock {
+  --ink: #1d1d1f; --ink-2: #3a3a3c; --muted: #7a7a7a; --faint: #a6a6a6;
+  --hair: #ececec; --soft: #f5f5f5;
+  --blue: #4a7fdc; --blue-line: #c6d6f2; --blue-tag-bg: #eef4ff; --blue-tag: #3866c4;
+  --teal: #22c4a0; --teal-line: #bde9dc; --teal-tag-bg: #ecfaf5; --teal-tag: #16876c;
+  --base: #bdbdbd; --base-line: #dedede;
+  --warn: #e3a21a; --warn-ink: #b5682b; --warn-line: #ecc68a; --warn-bg: #fdf6e6;
+  --ok: #2fb46c; --ok-ink: #2e8f55; --ok-line: #a8e0c0;
+  --merged: #8b5cf6; --merged-ink: #7a45e0; --merged-line: #cfbdf8; --merged-bg: #f5f0ff;
+  --accent-bg: #eef2fd; --accent-ink: #3553b5;
+  --add: #2f8a4f; --del: #c0394b; --add-block: #3fb950; --del-block: #e5534b;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --mono: 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font: 13px/1.45 var(--ui);
+  color: var(--ink);
+}
+.gcf-card {
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px #00000008;
+  padding: 14px 16px 12px;
+}
+.gcf-head { height: 20px; margin-bottom: 9px; padding: 0; gap: 12px; min-height: 0; }
+.gcf-title { font-size: 14px; font-weight: 600; letter-spacing: -0.1px; line-height: 20px; }
+.gcf-prnum { font-size: 14px; font-weight: 400; color: var(--muted); }
+.gcf-state { font-size: 12.5px; }
+.gcf-state.is-clean { color: var(--ok-ink); }
+.gcf-state.is-changes { color: var(--warn-ink); }
+.gcf-state.is-merged, .gcf-state.is-ready { color: var(--merged-ink); }
+.gcf-state.is-conflicts { color: var(--warn-ink); }
+.gcf-rows { padding: 0; max-height: 42vh; }
+.gcf-row {
+  height: 30px;
+  min-height: 30px;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.gcf-row.is-strong { color: var(--ink); }
+.gcf-railbox { flex: none; width: 43px; display: flex; align-items: center; overflow: visible; }
+.gcf-rail { overflow: visible; }
+.gcf-subject { font-size: 13px; }
+.gcf-pills { gap: 6px; margin-left: 2px; }
+.gcf-pill {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font: 11px/1.5 var(--mono);
+  background: var(--soft);
+  color: #707070;
+}
+.gcf-pill.is-head { background: var(--blue-tag-bg); color: var(--blue-tag); }
+.gcf-pill.is-branch { background: var(--soft); color: #707070; }
+.gcf-pill.is-remote { background: var(--teal-tag-bg); color: var(--teal-tag); }
+.gcf-pill.is-tag { background: var(--warn-bg); color: var(--warn-ink); }
+.gcf-meta { font-size: 12.5px; gap: 4px; color: var(--muted); }
+.gcf-meta code { font: 11.5px var(--mono); color: var(--faint); margin-right: 3px; }
+.gcf-meta.is-warn { color: var(--warn-ink); }
+.gcf-more { padding: 6px 6px 4px 61px; font-size: 12.5px; color: var(--faint); }
+.gcf-row--operation { color: var(--warn-ink); height: 30px; }
+/* Gutter glyphs sit in the rail column so every row's text starts at 61px. */
+.gcf-row--working .gcf-rail-wait { position: absolute; left: 3px; top: 8px; width: 14px; margin: 0; }
+.gcf-row--operation .gcf-op-icon { position: absolute; left: 3px; top: 8px; margin: 0; }
+.gcf-row--conflict .gcf-badge { position: absolute; left: 2px; top: 7px; margin: 0; }
+.gcf-row--conflict { background: var(--warn-bg); color: var(--warn-ink); }
+.gcf-badge { width: 16px; height: 16px; font-size: 10.5px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-ink); }
+.gcf-checks { gap: 6px; margin: 13px 0 0 -4px; padding: 0; }
+.gcf-check {
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.gcf-check svg { color: var(--ok); width: 11px; height: 11px; }
+.gcf-check.is-failed { color: var(--warn-ink); }
+.gcf-check.is-failed svg { color: var(--warn); }
+.gcf-foot { min-height: 32px; margin-top: 11px; padding: 0; border-top: 0; font-size: 13px; color: var(--ink); }
+.gcf-foot-state { color: var(--ink); font-size: 13px; }
+.gcf-foot-state.is-conflicts { color: var(--warn-ink); }
+.gcf-foot-state.is-clean { color: var(--ink); }
+.gcf-action {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+  font: 500 13px var(--ui);
+  margin-left: auto;
+}
+.gcf-action:disabled { opacity: 1; cursor: default; }
+.gcf-action.is-warn { background: var(--warn-bg); color: var(--warn-ink); }
+.gcf-chips { gap: 6px; padding: 6px 0 0; }
+.gcf-chip {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  background: #fff;
+  font: 12.5px var(--ui);
+  color: var(--ink);
+}
+.gcf-chip i { width: 7px; height: 7px; }
+.gcf-chip.is-clean, .gcf-chip.is-changes { color: var(--ink); }
+.gcf-chip.is-clean i { background: var(--ok); }
+.gcf-chip.is-changes i { background: var(--warn); }
+.gcf-chip.is-conflicts i { background: var(--warn); }
+.gcf-chip.is-merged i { background: var(--merged); }
+.gcf-heat i { width: 7px; height: 7px; border-radius: 1.5px; }
+.gcf-heat i.is-add { background: var(--add-block); }
+.gcf-heat i.is-del { background: var(--del-block); }
+.gcf-chip--diff b { color: var(--add); }
+.gcf-chip--diff em { color: var(--del); }
 @media (prefers-reduced-motion: reduce) {
   .gcf-swap { animation: none; }
   .gcf-reveal { transition: none; }
@@ -769,7 +993,8 @@ body[data-ds-dark-theme] .gcf-dock {
   .gcf-row, .gcf-num { animation: none; }
   .gcf-status, .gcf-status i { transition: none; }
   .gcf-toggle svg { transition: none; }
-  .gcf-spinner { animation: none; }
+  .gcf-spinner-core { animation: none; }
+  .gcf-spinner-halo { animation: none; opacity: 0.35; transform: scale(1.35); }
 }
 .gcf-label {
   flex: none;
@@ -1069,90 +1294,85 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    const LANE_COLORS = ['#7c5cd6', '#2f9e8f', '#4a7fdc', '#d98a2b', '#c2557a', '#5b8a3c'];
-    const LANE_WIDTH = 16;
-    const ROW_HEIGHT = 34;
+    // Replica lane tones: lane 0 is "ours" (blue), lane 1 "other" (teal),
+    // later lanes cycle through the remaining tones.
+    const LANE_TONES = ['ours', 'other', 'merged', 'warn', 'ok'];
+    const TONE_COLORS = {
+      base: '#bdbdbd',
+      ours: '#4a7fdc',
+      other: '#22c4a0',
+      merged: '#8b5cf6',
+      warn: '#e3a21a',
+      ok: '#2fb46c',
+    };
+
+    function laneTone(lane) {
+      return LANE_TONES[lane % LANE_TONES.length];
+    }
+    const LANE_X0 = 10;
+    const LANE_WIDTH = 17;
+    const ROW_HEIGHT = 30;
+    const TEXT_X = 61;
 
     function laneX(lane) {
-      return lane * LANE_WIDTH + LANE_WIDTH / 2;
+      return LANE_X0 + lane * LANE_WIDTH;
     }
 
     function laneStroke(lane) {
-      return LANE_COLORS[Math.abs(lane) % LANE_COLORS.length];
+      return TONE_COLORS[laneTone(lane)];
     }
 
     /** One row of the commit graph: lanes, node and merge curves (video 8.6s). */
-    function GraphRail({ row }) {
-      const columns = Math.max(1, row.columns ?? 1);
-      const width = columns * LANE_WIDTH;
-      const mid = ROW_HEIGHT / 2;
+    /** Tone for a commit row: lane 0 is "ours", later lanes cycle. */
+    function toneOfRow(row) {
+      return laneTone(Number.isInteger(row.lane) ? row.lane : 0);
+    }
+
+    /**
+     * The whole card's graph in one SVG (replica render.ts): long edges between
+     * rows, nodes on top, draw-on animation via `pathLength`.
+     */
+    function GraphRail({ rows, edges }) {
+      const commits = rows.filter((row) => row.kind === 'commit');
+      const maxLane = Math.max(0, ...commits.map((row) => (Number.isInteger(row.lane) ? row.lane : 0)));
+      const width = LANE_X0 * 2 + (maxLane + 1) * LANE_WIDTH;
+      const height = rows.length * ROW_HEIGHT;
+      const y = (index) => (index <= 0 ? ROW_HEIGHT / 2 : index >= rows.length ? height : index * ROW_HEIGHT + ROW_HEIGHT / 2);
+      const x = (lane) => LANE_X0 + lane * LANE_WIDTH;
       const parts = [];
-      for (const lane of row.before ?? []) {
-        if (lane === row.lane) continue;
+
+      for (const edge of edges) {
+        const x1 = x(edge.fromLane);
+        const x2 = x(edge.toLane);
+        const y1 = y(edge.from);
+        const y2 = y(edge.to);
+        const bend = Math.max(y1, y2 - ROW_HEIGHT);
+        const mid = (bend + y2) / 2;
         parts.push(
-          h('line', {
-            key: `b${lane}`,
-            x1: laneX(lane),
-            x2: laneX(lane),
-            y1: 0,
-            y2: ROW_HEIGHT,
-            stroke: laneStroke(lane),
-            strokeWidth: 1.5,
+          h('path', {
+            key: `e${edge.from}>${edge.to}>${edge.fromLane}`,
+            className: `gcf-edge t-${laneTone(edge.fromLane === 0 ? edge.toLane : edge.fromLane)}`,
+            d: `M${x1} ${y1}L${x1} ${bend}C${x1} ${mid},${x2} ${mid},${x2} ${y2}`,
+            pathLength: 1,
           }),
         );
       }
-      parts.push(
-        h('line', {
-          key: 'own',
-          x1: laneX(row.lane),
-          x2: laneX(row.lane),
-          y1: 0,
-          y2: mid,
-          stroke: laneStroke(row.lane),
-          strokeWidth: 1.5,
-        }),
-      );
-      for (const parent of row.parents ?? []) {
-        if (parent === row.lane) {
-          parts.push(
-            h('line', {
-              key: `p${parent}`,
-              x1: laneX(parent),
-              x2: laneX(parent),
-              y1: mid,
-              y2: ROW_HEIGHT,
-              stroke: laneStroke(parent),
-              strokeWidth: 1.5,
-            }),
-          );
-        } else {
-          const x1 = laneX(row.lane);
-          const x2 = laneX(parent);
-          parts.push(
-            h('path', {
-              key: `c${parent}`,
-              d: `M${x1} ${mid} C ${x1} ${mid + 12}, ${x2} ${ROW_HEIGHT - 12}, ${x2} ${ROW_HEIGHT}`,
-              fill: 'none',
-              stroke: laneStroke(parent),
-              strokeWidth: 1.5,
-            }),
-          );
-        }
-      }
-      parts.push(
-        h('circle', {
-          key: 'node',
-          cx: laneX(row.lane),
-          cy: mid,
-          r: 4,
-          fill: laneStroke(row.lane),
-          stroke: 'var(--dsw-alias-bg-base, #fff)',
-          strokeWidth: 1.5,
-        }),
-      );
+
+      rows.forEach((row, index) => {
+        if (row.kind !== 'commit') return;
+        const lane = Number.isInteger(row.lane) ? row.lane : 0;
+        parts.push(
+          h(
+            'g',
+            { key: `n${row.id}`, className: `gcf-node t-${toneOfRow(row)}`, transform: `translate(${x(lane)} ${y(index)})` },
+            h('circle', { className: 'gcf-n-dot', r: 3.5 }),
+          ),
+        );
+      });
+
       return h(
         'svg',
-        { className: 'gcf-rail', width, height: ROW_HEIGHT, viewBox: `0 0 ${width} ${ROW_HEIGHT}`, 'aria-hidden': true },
+        { className: 'gcf-rail', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': true },
         parts,
       );
     }
@@ -1161,11 +1381,16 @@ body[data-ds-dark-theme] .gcf-dock {
       return name.startsWith('origin/') ? name.slice('origin/'.length) : name;
     }
 
-    function Row({ row, t, now, index, scramble }) {
+    function Row({ row, t, now, index, total, scramble }) {
       if (row.kind === 'operation') {
         return h(
           'div',
-          { className: 'gcf-row gcf-row--operation', 'data-gcf': 'row', 'data-kind': 'operation', style: { '--gcf-i': String(index) } },
+          {
+            className: 'gcf-row gcf-row--operation',
+            'data-gcf': 'row',
+            'data-kind': 'operation',
+            style: { '--gcf-i': String(index), '--y': `${index * ROW_HEIGHT}px` },
+          },
           h('span', { className: 'gcf-op-icon' }, h(WarnGlyph)),
           h('span', { className: 'gcf-subject' }, format(t, `row.operation.${row.operation}`)),
           h(
@@ -1178,7 +1403,12 @@ body[data-ds-dark-theme] .gcf-dock {
       if (row.kind === 'conflict') {
         return h(
           'div',
-          { className: 'gcf-row gcf-row--conflict', 'data-gcf': 'row', 'data-kind': 'conflict', style: { '--gcf-i': String(index) } },
+          {
+            className: 'gcf-row gcf-row--conflict',
+            'data-gcf': 'row',
+            'data-kind': 'conflict',
+            style: { '--gcf-i': String(index), '--y': `${index * ROW_HEIGHT}px` },
+          },
           h('span', { className: 'gcf-badge', 'aria-hidden': true }, String(row.index)),
           h('span', { className: 'gcf-subject' }, row.path),
           h('span', { className: 'gcf-meta' }, h('code', null, row.code)),
@@ -1191,17 +1421,29 @@ body[data-ds-dark-theme] .gcf-dock {
             className: 'gcf-row gcf-row--working',
             'data-gcf': 'row',
             'data-kind': 'working',
-            style: { '--gcf-i': String(index) },
+            style: {
+              '--gcf-i': String(index),
+              '--rev': String(Math.max(0, (total ?? index + 1) - 1 - index)),
+              '--y': `${index * ROW_HEIGHT}px`,
+            },
           },
-          h('span', { className: 'gcf-rail-wait' }, h('span', { className: 'gcf-spinner' })),
+          h('span', { className: 'gcf-rail-wait' }, h(Spinner)),
           h('span', { className: 'gcf-subject' }, t('row.working')),
           h('span', { className: 'gcf-meta' }, format(t, 'row.files', { n: row.files })),
         );
       }
       return h(
         'div',
-        { className: 'gcf-row', 'data-gcf': 'row', 'data-kind': 'commit', style: { '--gcf-i': String(index) } },
-        h(GraphRail, { row }),
+        {
+          className: `gcf-row${(row.lane ?? 0) === 0 ? ' is-strong' : ''}`,
+          'data-gcf': 'row',
+          'data-kind': 'commit',
+          style: {
+            '--gcf-i': String(index),
+            '--rev': String(Math.max(0, (total ?? index + 1) - 1 - index)),
+            '--y': `${index * ROW_HEIGHT}px`,
+          },
+        },
         h(
           'span',
           { className: 'gcf-subject' },
@@ -1371,6 +1613,10 @@ body[data-ds-dark-theme] .gcf-dock {
         return null;
       }
 
+      const conflictRows = (view.conflictRows ?? []).map((row) => ({ ...row, kind: 'conflict' }));
+      const allRows = [...view.rows, ...conflictRows];
+      const graphHeight = allRows.length * ROW_HEIGHT;
+
       const card = collapsed
         ? null
         : h(
@@ -1397,12 +1643,22 @@ body[data-ds-dark-theme] .gcf-dock {
                     { key: view.phase, className: 'gcf-swap' },
                   h(
                     'div',
-                    { className: 'gcf-rows', 'data-gcf': 'rows' },
-                    view.rows.map((row, index) =>
-                      h(Row, { key: row.id, row, t, now, index, scramble: index === 0 }),
-                    ),
-                    (view.conflictRows ?? []).map((row, index) =>
-                      h(Row, { key: row.id, row: { ...row, kind: 'conflict' }, t, now, index: index + view.rows.length }),
+                    { className: 'gcf-graph', style: { height: `${graphHeight}px` } },
+                    h(GraphRail, { rows: allRows, edges: view.edges ?? [] }),
+                    h(
+                      'div',
+                      { className: 'gcf-rows', 'data-gcf': 'rows' },
+                      allRows.map((row, index) =>
+                        h(Row, {
+                          key: row.id,
+                          row,
+                          t,
+                          now,
+                          index,
+                          total: allRows.length,
+                          scramble: row.kind === 'commit' && index === 0,
+                        }),
+                      ),
                     ),
                   ),
                   view.hiddenCommits > 0
