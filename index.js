@@ -13,7 +13,7 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
-import { readGitStatus } from './lib/git/status.mjs';
+import { readGitStatus, readGitStatusLight } from './lib/git/status.mjs';
 import { runGit } from './lib/git/exec.mjs';
 import { discoverRepositories } from './lib/git/discover.mjs';
 import { registerGitFlow } from './lib/flow/register.mjs';
@@ -36,6 +36,7 @@ export function apply(ctx) {
   registerGitFlow(ctx, {
     defineTool,
     readStatus: readGitStatus,
+    readStatusLight: readGitStatusLight,
     runGit,
     discover: (directory, options) => discoverRepositories(directory, { runGit, ...options }),
   });

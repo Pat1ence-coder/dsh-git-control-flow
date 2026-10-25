@@ -1453,9 +1453,11 @@ body[data-ds-dark-theme] .gcf-dock {
       const maxLane = Math.max(0, ...commits.map((row) => (Number.isInteger(row.lane) ? row.lane : 0)));
       const width = LANE_X0 * 2 + (maxLane + 1) * LANE_WIDTH;
       const height = rows.length * ROW_HEIGHT;
-      const y = (index) => (index <= 0 ? ROW_HEIGHT / 2 : index >= rows.length ? height : index * ROW_HEIGHT + ROW_HEIGHT / 2);
+      // index < 0 → top of window (y=0); index >= rows.length → bottom (y=height)
+      const y = (index) => (index < 0 ? 0 : index >= rows.length ? height : index * ROW_HEIGHT + ROW_HEIGHT / 2);
       const x = (lane) => LANE_X0 + lane * LANE_WIDTH;
-      const parts = [];
+      const edgeParts = [];
+      const nodeParts = [];
 
       for (const edge of edges) {
         const x1 = x(edge.fromLane);
@@ -1464,7 +1466,7 @@ body[data-ds-dark-theme] .gcf-dock {
         const y2 = y(edge.to);
         const bend = Math.max(y1, y2 - ROW_HEIGHT);
         const mid = (bend + y2) / 2;
-        parts.push(
+        edgeParts.push(
           h('path', {
             key: `e${edge.from}>${edge.to}>${edge.fromLane}`,
             className: `gcf-edge t-${laneTone(edge.fromLane === 0 ? edge.toLane : edge.fromLane)}`,
@@ -1475,9 +1477,32 @@ body[data-ds-dark-theme] .gcf-dock {
       }
 
       rows.forEach((row, index) => {
-        if (row.kind !== 'commit') return;
+        if (row.kind !== 'commit') {
+          // working/operation rows get a distinct node in the rail at lane 0.
+          if (row.kind === 'working' || row.kind === 'operation') {
+            const cx = x(0), cy = y(index);
+            if (row.kind === 'operation') {
+              // Merge/rebase in-progress: filled amber dot (matches video 8.6s)
+              nodeParts.push(h('circle', {
+                key: `n${row.id}`,
+                cx, cy, r: 6,
+                fill: row.operation === 'merge' ? 'var(--warn, #e3a21a)' : 'var(--base, #bdbdbd)',
+              }));
+            } else {
+              // Working changes: hollow dashed ring (video 3.0s)
+              nodeParts.push(h('circle', {
+                key: `n${row.id}`,
+                cx, cy, r: 5, fill: 'none',
+                stroke: 'var(--base-line, #dedede)',
+                strokeWidth: 1.5,
+                strokeDasharray: '3 3',
+              }));
+            }
+          }
+          return;
+        }
         const lane = Number.isInteger(row.lane) ? row.lane : 0;
-        parts.push(
+        nodeParts.push(
           h(
             'g',
             { key: `n${row.id}`, className: `gcf-node t-${toneOfRow(row)}`, transform: `translate(${x(lane)} ${y(index)})` },
@@ -1486,10 +1511,12 @@ body[data-ds-dark-theme] .gcf-dock {
         );
       });
 
+      // Edges rendered first, nodes on top — so nodes cover the lines at their centers.
       return h(
         'svg',
         { className: 'gcf-rail', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': true },
-        parts,
+        h('g', { className: 'gcf-edges' }, edgeParts),
+        h('g', { className: 'gcf-nodes' }, nodeParts),
       );
     }
 
