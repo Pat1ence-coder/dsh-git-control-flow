@@ -484,6 +484,12 @@ window.__ModuleLoader__.load({
   stroke-dashoffset: 0;
   animation: gcf-draw 700ms var(--ease, cubic-bezier(0.2, 0.8, 0.2, 1)) both 100ms;
 }
+/* Continuation lines (from top / to bottom of window): faded via SVG gradient. */
+.gcf-edge.is-continuation {
+  stroke-dasharray: none;
+  stroke-dashoffset: 0;
+  animation: none;
+}
 .gcf-edge.t-ours { stroke: var(--blue-line, #93b4ee); }
 .gcf-edge.t-other { stroke: var(--teal-line, #5ecfb5); }
 .gcf-edge.t-merged { stroke: var(--merged-line, #cfbdf8); }
@@ -940,8 +946,8 @@ body[data-ds-dark-theme] .gcf-dock {
 .gcf-row.is-strong { color: var(--ink); }
 .gcf-railbox { flex: none; width: 43px; display: flex; align-items: center; overflow: visible; }
 .gcf-rail { overflow: visible; }
-.gcf-subject { font-size: 13px; }
-.gcf-pills { gap: 6px; margin-left: 2px; }
+.gcf-subject { font-size: 13px; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.gcf-pills { gap: 6px; margin-left: 2px; flex: none; max-width: 44%; overflow: hidden; }
 .gcf-pill {
   padding: 1px 6px;
   border-radius: 4px;
@@ -1477,28 +1483,19 @@ body[data-ds-dark-theme] .gcf-dock {
       for (const edge of edges) {
         const x1 = x(edge.fromLane);
         const x2 = x(edge.toLane);
-        // For from=-1 (top continuation), start just below any non-commit row
-        // that sits above the first commit, so the line doesn't pierce its node.
-        let y1;
-        if (edge.from < 0) {
-          // Find any non-commit rows above the target.
-          let startRow = 0;
-          while (startRow < edge.to && rows[startRow] && rows[startRow].kind !== 'commit') {
-            startRow++;
-          }
-          // Start from just below the last non-commit node (r=5 + 2px gap),
-          // or from the top if there are no non-commit rows above.
-          y1 = startRow > 0 ? y(startRow - 1) + 8 : 0;
-        } else {
-          y1 = y(edge.from);
-        }
+        // Skip continuation edges (no node at one end) — they look broken regardless
+        // of styling. The "N more commits" footer already signals truncated history.
+        if (edge.from < 0 || edge.to >= rows.length) continue;
+
+        const y1 = y(edge.from);
         const y2 = y(edge.to);
         const bend = Math.max(y1, y2 - ROW_HEIGHT);
         const mid = (bend + y2) / 2;
+        const tone = laneTone(edge.fromLane === 0 ? edge.toLane : edge.fromLane);
         edgeParts.push(
           h('path', {
             key: `e${edge.from}>${edge.to}>${edge.fromLane}`,
-            className: `gcf-edge t-${laneTone(edge.fromLane === 0 ? edge.toLane : edge.fromLane)}`,
+            className: `gcf-edge t-${tone}`,
             d: `M${x1} ${y1}L${x1} ${bend}C${x1} ${mid},${x2} ${mid},${x2} ${y2}`,
             pathLength: 1,
           }),
@@ -1549,6 +1546,7 @@ body[data-ds-dark-theme] .gcf-dock {
       return h(
         'svg',
         { className: 'gcf-rail', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': true },
+        null,
         h('g', { className: 'gcf-edges' }, edgeParts),
         h('g', { className: 'gcf-nodes' }, nodeParts),
       );
@@ -1634,7 +1632,13 @@ body[data-ds-dark-theme] .gcf-dock {
             ? h(
                 'span',
                 { className: 'gcf-pills' },
-                row.refs.slice(0, 2).map((ref) =>
+                // Deduplicate by display name (e.g. HEAD -> feat/x and feat/x
+                // both shorten to the same label; keep the first / higher-priority one).
+                row.refs.reduce((acc, ref) => {
+                  const label = shortRef(ref.name);
+                  if (!acc.seen.has(label)) { acc.seen.add(label); acc.list.push(ref); }
+                  return acc;
+                }, { seen: new Set(), list: [] }).list.slice(0, 2).map((ref) =>
                   h('span', { key: ref.name, className: `gcf-pill is-${ref.kind}` }, shortRef(ref.name)),
                 ),
               )
