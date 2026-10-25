@@ -1,0 +1,36 @@
+{
+  "name": "@local/dsh-git-control-flow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generative Git workflow card inside the DSH conversation",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check lib/git/exec.mjs && node --check lib/git/parse.mjs && node --check lib/git/status.mjs",
+    "test": "node --test test/git-status.test.mjs && node test/client-smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

@@ -1,0 +1,4 @@
+- insert:
+    - id: git-control-flow
+      name: '@local/dsh-git-control-flow'
+      config: {}

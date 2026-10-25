@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Generative Git",
+    "description": "A Git workflow card that grows out of the composer: branch graph, conflicts, checks and merge state inside the conversation."
+  }
+}
