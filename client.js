@@ -833,12 +833,13 @@ body[data-ds-dark-theme] .gcf-dock {
 
     function Tracking({ view, t }) {
       if (view.branch.upstream === null) return null;
+      const { ahead, behind } = view.branch;
       return h(
         'span',
         { className: 'gcf-tracking', 'data-gcf': 'tracking' },
         h('span', { className: 'gcf-upstream' }, view.branch.upstream),
-        h('span', { className: 'gcf-ahead', title: t('tracking.ahead') }, `+${view.branch.ahead}`),
-        h('span', { className: 'gcf-behind', title: t('tracking.behind') }, `\u2212${view.branch.behind}`),
+        ahead > 0 ? h('span', { className: 'gcf-ahead', title: t('tracking.ahead') }, `↑${ahead}`) : null,
+        behind > 0 ? h('span', { className: 'gcf-behind', title: t('tracking.behind') }, `↓${behind}`) : null,
       );
     }
 
