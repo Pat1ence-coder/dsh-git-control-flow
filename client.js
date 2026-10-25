@@ -32,35 +32,6 @@ window.__ModuleLoader__.load({
 
     const COLLAPSE_KEY = 'gcf:collapsed:';
 
-    /**
-     * The dock lives inside the composer fallback, which the host replaces with
-     * the approval panel while an approval is pending. This module-level store
-     * keeps the last session and view so a `shell.overlay` entry can keep
-     * showing the pending card for exactly that window.
-     */
-    const pendingListeners = new Set();
-    let pendingSnapshot = { sessionId: null, view: null };
-
-    function publishPendingState(sessionId, view) {
-      const next = { sessionId, view: view ?? null };
-      if (pendingSnapshot.sessionId === next.sessionId && pendingSnapshot.view === next.view) return;
-      pendingSnapshot = next;
-      for (const listener of pendingListeners) listener();
-    }
-
-    function subscribePending(listener) {
-      pendingListeners.add(listener);
-      return () => pendingListeners.delete(listener);
-    }
-
-    function usePendingState() {
-      return React.useSyncExternalStore(
-        subscribePending,
-        () => pendingSnapshot,
-        () => pendingSnapshot,
-      );
-    }
-
     function readCollapsed(sessionId) {
       try {
         return window.localStorage.getItem(COLLAPSE_KEY + sessionId) === '1';
@@ -111,20 +82,22 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** Header shared by the card and by the "clean but a write is pending" shell. */
+    /** Header: title (+ reserved PR number) and one state pill, as in the reference. */
     function CardHeader({ view, t, collapsed, onToggle, scrambleStatus }) {
-      const status = statusText(view, t);
+      const pr = view.pr ?? null;
+      const title = pr !== null && typeof pr.title === 'string' ? pr.title : branchText(view, t);
+      const number = pr !== null && Number.isInteger(pr.number) ? `#${pr.number}` : null;
+      const state = stateText(view, t);
       return h(
         'header',
         { className: 'gcf-head' },
-        h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
-        h('span', { className: 'gcf-title', title: branchText(view, t) }, branchText(view, t)),
-        h(Tracking, { view, t }),
+        h('span', { className: 'gcf-title', title }, title),
+        number === null ? null : h('span', { className: 'gcf-prnum' }, number),
         h(
           'span',
-          { className: 'gcf-status' },
+          { className: `gcf-state is-${stateOf(view)}` },
           h('i', null),
-          scrambleStatus === true ? h(Scramble, { text: status }) : status,
+          scrambleStatus === true ? h(Scramble, { text: state }) : state,
         ),
         h(Toggle, { collapsed, onToggle, t }),
       );
@@ -145,41 +118,18 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** Floating copy of the pending card, shown while the approval replaces the composer. */
-    function PendingOverlay({ t, view }) {
-      const stored = usePendingState();
-      const [polled, setPolled] = React.useState(null);
-      const [bottom, setBottom] = React.useState(96);
+    /**
+     * Composer takeover for a `git_flow` approval: the card itself carries the
+     * decision, so it stays where the dock sits instead of the host replacing
+     * the input area with its own panel.
+     */
+    function GitFlowApproval({ t, matched }) {
+      const [view, setView] = React.useState(null);
+      const sessionId = typeof matched?.sessionId === 'string' ? matched.sessionId : null;
 
-      // Anchor the floating card where the dock used to sit: directly above the
-      // composer seat, whose height changes while the approval panel is open.
       React.useEffect(() => {
-        if (typeof document === 'undefined') return () => {};
-        const seat = document.querySelector('[data-composer-seat]');
-        if (seat === null) return () => {};
-        const measure = () => {
-          const height = Math.round(seat.getBoundingClientRect().height);
-          if (Number.isFinite(height) && height > 0) setBottom(height + 8);
-        };
-        measure();
-        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
-        observer?.observe(seat);
-        window.addEventListener('resize', measure);
-        return () => {
-          observer?.disconnect();
-          window.removeEventListener('resize', measure);
-        };
-      }, []);
-
-      // Robust path: the dock may be unmounted before it ever saw the pending
-      // state, so the overlay asks the status route directly (the Host merges
-      // the projection's pending state into that response).
-      React.useEffect(() => {
-        const sessionId = stored.sessionId;
         if (sessionId === null || typeof fetch !== 'function') return () => {};
         let cancelled = false;
-        setPolled(null);
-
         const load = async () => {
           try {
             const response = await fetch(statusUrl(sessionId), {
@@ -188,49 +138,82 @@ window.__ModuleLoader__.load({
             });
             if (!response.ok) return;
             const payload = await response.json();
-            if (!cancelled) setPolled(payload);
+            if (!cancelled) setView(payload);
           } catch {
             /* keep the last value */
           }
         };
-
         load();
-        const timer = setInterval(load, 4000);
+        const timer = setInterval(load, 3000);
         return () => {
           cancelled = true;
           clearInterval(timer);
         };
-      }, [stored.sessionId]);
+      }, [sessionId]);
 
-      const model =
-        view !== undefined
-          ? view
-          : polled !== null && polled.pending !== null && polled.pending !== undefined
-            ? polled
-            : stored.view;
-      if (model === null || model === undefined) return null;
-      const pending = model.pending;
-      if (pending === null || pending === undefined) return null;
+      const reason = typeof matched?.reason === 'string' ? matched.reason : '';
+      const decide = (outcome) => {
+        if (matched === null || matched === undefined) return;
+        if (typeof matched.answer !== 'function' || matched.answerable === false) return;
+        matched.answer(outcome);
+      };
+
+      const pending = view?.pending ?? { phase: 'awaiting-approval', action: null, reason: reason === '' ? null : reason };
+
       return h(
         'div',
-        { className: 'gcf-overlay', 'data-gcf': 'overlay', style: { bottom: `${bottom}px` } },
+        { className: 'gcf-approval', 'data-gcf': 'approval' },
         h(
-          'div',
-          { className: 'gcf-overlay-card', 'data-phase': pending.phase },
+          'section',
+          {
+            className: 'gcf-card is-approval',
+            'data-gcf': 'card',
+            'data-phase': 'approval',
+            'aria-label': t('app.title'),
+          },
+          view !== null
+            ? h(CardHeader, { view, t, collapsed: false, scrambleStatus: false })
+            : h(
+                'header',
+                { className: 'gcf-head' },
+                h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+                h('span', { className: 'gcf-title' }, t('app.title')),
+              ),
+          h(PendingLine, { pending, t }),
+          reason !== '' ? h('div', { className: 'gcf-approval-reason' }, reason) : null,
+          view !== null && Array.isArray(view.rows)
+            ? h(
+                'div',
+                { className: 'gcf-rows', 'data-gcf': 'rows' },
+                view.rows.map((row, index) =>
+                  h(Row, { key: row.id, row, t, now: Date.now(), index, scramble: false }),
+                ),
+              )
+            : null,
           h(
             'div',
-            { className: 'gcf-overlay-head' },
-            h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+            { className: 'gcf-approval-actions' },
             h(
-              'span',
-              { className: 'gcf-overlay-title' },
-              model.presence === 'repo' ? branchText(model, t) : t('app.title'),
+              'button',
+              {
+                type: 'button',
+                className: 'gcf-approval-button is-reject',
+                'data-gcf': 'reject',
+                onClick: () => decide('rejected'),
+              },
+              t('approval.reject'),
             ),
-            model.presence === 'repo'
-              ? h('span', { className: 'gcf-overlay-status' }, h('i', null), statusText(model, t))
-              : null,
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gcf-approval-button is-allow',
+                'data-gcf': 'allow',
+                onClick: () => decide('allowed-once'),
+              },
+              t('approval.allow'),
+            ),
           ),
-          h(PendingLine, { pending, t }),
         ),
       );
     }
@@ -381,33 +364,77 @@ window.__ModuleLoader__.load({
   padding: 2px 6px 6px;
 }
 .gcf-row {
-  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  padding: 0 8px 0 30px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 8px 0 6px;
   border-radius: 6px;
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary, #1d1d1f);
 }
 .gcf-row:hover { background: var(--dsw-alias-bg-layer-2, #f6f6f6); }
-.gcf-row::before {
-  content: '';
-  position: absolute;
-  left: 17px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--gcf-rail, var(--dsw-alias-border-l1, #e8e8e8));
+.gcf-rail { flex: none; display: block; }
+.gcf-rail-wait {
+  flex: none;
+  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 2px;
 }
-.gcf-row:first-child::before { top: 14px; }
-.gcf-row:last-child::before { bottom: 50%; }
+.gcf-pills {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: baseline;
+}
+.gcf-pill {
+  font: 11px/16px var(--dsh-mono-font, "SFMono-Regular", Menlo, Consolas, monospace);
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2, #f2f2f2);
+  color: var(--dsw-alias-label-secondary, #5f5f5f);
+  white-space: nowrap;
+}
+.gcf-pill.is-head { background: #efe8ff; color: #7c5cd6; }
+.gcf-pill.is-branch { background: #f2f2f2; color: #5f5f5f; }
+.gcf-pill.is-remote { background: #e6f4f1; color: #2f9e8f; }
+.gcf-pill.is-tag { background: #fdf3e2; color: #b07a2a; }
 .gcf-row {
   animation: gcf-row-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   animation-delay: calc(var(--gcf-i, 0) * 24ms);
 }
+.gcf-swap {
+  animation: gcf-decode 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes gcf-decode {
+  from { opacity: 0.35; filter: blur(6px); }
+  to { opacity: 1; filter: none; }
+}
+.gcf-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 14px 10px;
+}
+.gcf-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 22px;
+  color: var(--dsw-alias-state-success-primary, #2e8f55);
+  background: var(--dsw-alias-bg-layer-1, #fff);
+}
+.gcf-check.is-failed { color: var(--dsw-alias-state-error-primary, #c0394b); }
+.gcf-check.is-pending { color: var(--dsw-alias-label-tertiary, #8a8a8a); }
+.gcf-check-label { white-space: nowrap; }
 @keyframes gcf-row-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
@@ -438,6 +465,30 @@ window.__ModuleLoader__.load({
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.gcf-row--operation { color: var(--dsw-alias-state-warn-primary, #b07a2a); }
+.gcf-op-icon { flex: none; display: inline-flex; margin-left: 4px; }
+.gcf-meta.is-warn { color: var(--dsw-alias-state-warn-primary, #b07a2a); }
+.gcf-row--conflict { background: var(--dsw-alias-state-warn-tertiary, #fdf3e2); }
+.gcf-row--conflict .gcf-subject { color: var(--dsw-alias-state-warn-primary, #8a5a15); }
+.gcf-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-warn-primary, #d89614);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.gcf-action.is-warn {
+  border-color: var(--dsw-alias-state-warn-secondary, #e5c37a);
+  color: var(--dsw-alias-state-warn-primary, #b07a2a);
+}
 .gcf-meta {
   flex: none;
   margin-left: auto;
@@ -453,6 +504,91 @@ window.__ModuleLoader__.load({
   font: 10px/1.5 var(--dsh-mono-font, "SFMono-Regular", Menlo, Consolas, monospace);
   color: var(--dsw-alias-label-tertiary, #a6a6a6);
 }
+.gcf-prnum {
+  flex: none;
+  font: 12px/18px var(--dsh-mono-font, "SFMono-Regular", Menlo, Consolas, monospace);
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.gcf-state {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary, #5f5f5f);
+}
+.gcf-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.gcf-state.is-clean { color: var(--dsw-alias-state-success-primary, #2e8f55); }
+.gcf-state.is-changes { color: var(--dsw-alias-state-warn-primary, #d89614); }
+.gcf-state.is-conflicts { color: var(--dsw-alias-state-error-primary, #c0394b); }
+.gcf-state.is-merged, .gcf-state.is-ready { color: #7c5cd6; }
+.gcf-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 4px 0;
+}
+.gcf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-secondary, #5f5f5f);
+  font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+}
+.gcf-chip.is-clean { color: var(--dsw-alias-state-success-primary, #2e8f55); }
+.gcf-chip.is-changes { color: var(--dsw-alias-state-warn-primary, #d89614); }
+.gcf-chip.is-conflicts { color: var(--dsw-alias-state-error-primary, #c0394b); }
+.gcf-chip.is-merged, .gcf-chip.is-ready { color: #7c5cd6; }
+.gcf-chip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.gcf-chip--diff b { font-weight: 500; color: var(--dsw-alias-file-diff-added-marker, #1f9a63); }
+.gcf-chip--diff em { font-style: normal; color: var(--dsw-alias-file-diff-deleted-marker, #c3514a); }
+.gcf-chip--tracking .gcf-ahead { color: var(--dsw-alias-state-success-primary, #2e8f55); }
+.gcf-chip--tracking .gcf-behind { color: var(--dsw-alias-state-error-primary, #c0394b); }
+.gcf-heat { display: inline-flex; gap: 2px; }
+.gcf-heat i { width: 5px; height: 5px; border-radius: 1px; }
+.gcf-heat i.is-add { background: var(--dsw-alias-file-diff-added-marker, #3fae74); }
+.gcf-heat i.is-del { background: var(--dsw-alias-file-diff-deleted-marker, #dd6b62); }
+.gcf-chip--toggle {
+  cursor: pointer;
+  font: inherit;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.gcf-chip--toggle:hover { background: var(--dsw-alias-interactive-bg-hover, #f2f2f2); }
+.gcf-foot-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.gcf-foot-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.gcf-foot-state.is-conflicts { color: var(--dsw-alias-state-error-primary, #c0394b); }
+.gcf-foot-state.is-clean { color: var(--dsw-alias-state-success-primary, #2e8f55); }
 .gcf-repo-row {
   display: flex;
   align-items: center;
@@ -537,56 +673,52 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary, #8a8a8a);
   cursor: pointer;
 }
-.gcf-overlay {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 96px;
-  z-index: 60;
-  width: min(var(--dsh-composer-card-max-width, 760px), calc(100vw - 32px));
+.gcf-approval {
   display: flex;
   justify-content: center;
-  pointer-events: none;
+  padding: 8px var(--dsh-composer-side-clearance, 16px) 12px;
 }
-.gcf-overlay-card {
+.gcf-card.is-approval {
   width: 100%;
-  pointer-events: auto;
-  box-sizing: border-box;
-  border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
-  border-radius: var(--dsw-radius-md, 10px);
-  background: var(--dsw-alias-bg-layer-1, #fff);
-  box-shadow: var(--dsw-elevation-panel, 0 6px 24px rgba(16, 24, 40, 0.12));
-  padding: 10px 0 0;
+  max-width: var(--dsh-chat-content-width, 760px);
+  border-color: var(--dsw-alias-state-warn-secondary, #e5c37a);
+  box-shadow: var(--dsw-shadow-lv2, 0 6px 24px rgba(16, 24, 40, 0.12));
 }
-.gcf-overlay-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px 6px;
-}
-.gcf-overlay-title {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.gcf-approval-reason {
+  padding: 0 14px 8px;
   font-size: 13px;
-  font-weight: 500;
+  line-height: 20px;
   color: var(--dsw-alias-label-primary, #1d1d1f);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-.gcf-overlay-status {
-  flex: none;
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary, #5f5f5f);
+.gcf-approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 12px;
 }
-.gcf-overlay-status i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
+.gcf-approval-button {
+  border-radius: var(--dsw-radius-md, 10px);
+  border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #1d1d1f);
+  font-size: 13px;
+  line-height: 20px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.gcf-approval-button.is-allow {
+  background: var(--dsw-alias-label-primary, #1d1d1f);
+  border-color: var(--dsw-alias-label-primary, #1d1d1f);
+  color: var(--dsw-alias-bg-base, #fff);
+}
+.gcf-approval-button:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.gcf-approval-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .gcf-toggle:hover {
   background: var(--dsw-alias-interactive-bg-hover, #ececec);
@@ -631,6 +763,7 @@ body[data-ds-dark-theme] .gcf-dock {
   --gcf-rail: #33405c;
 }
 @media (prefers-reduced-motion: reduce) {
+  .gcf-swap { animation: none; }
   .gcf-reveal { transition: none; }
   .gcf-body { transition: none; }
   .gcf-row, .gcf-num { animation: none; }
@@ -673,8 +806,24 @@ body[data-ds-dark-theme] .gcf-dock {
       'action.pending': '写操作由 AI 在对话中执行，需你审批',
       'action.expand': '展开',
       'action.collapse': '收起',
+      'state.clean': '干净',
+      'state.changes': '有改动',
+      'state.conflicts': '{n} 处冲突',
+      'state.open': 'Open',
+      'state.ready': '可合并',
+      'state.merged': '已合并',
+      'row.operation.merge': 'Merge into main',
+      'row.operation.rebase': 'Rebase onto upstream',
+      'row.operation.cherry-pick': 'Cherry-pick in progress',
+      'row.operation.revert': 'Revert in progress',
+      'row.merging': '进行中',
+      'row.conflicts': '{n} 处冲突',
+      'foot.conflicts': '{n} 处冲突待解决',
+      'action.resolve': '解决冲突',
       'pending.awaiting': '等待审批',
       'pending.running': '执行中',
+      'approval.reject': '拒绝',
+      'approval.allow': '允许一次',
       'time.now': '刚刚',
       'time.minutes': '{n} 分钟前',
       'time.hours': '{n} 小时前',
@@ -706,8 +855,24 @@ body[data-ds-dark-theme] .gcf-dock {
       'action.pending': 'The AI performs writes in the conversation, with your approval',
       'action.expand': 'Expand',
       'action.collapse': 'Collapse',
+      'state.clean': 'Clean',
+      'state.changes': 'Changes',
+      'state.conflicts': '{n} conflicts',
+      'state.open': 'Open',
+      'state.ready': 'Ready',
+      'state.merged': 'Merged',
+      'row.operation.merge': 'Merge into main',
+      'row.operation.rebase': 'Rebase onto upstream',
+      'row.operation.cherry-pick': 'Cherry-pick in progress',
+      'row.operation.revert': 'Revert in progress',
+      'row.merging': 'in progress',
+      'row.conflicts': '{n} conflicts',
+      'foot.conflicts': '{n} conflicts to resolve',
+      'action.resolve': 'Resolve conflicts',
       'pending.awaiting': 'Waiting for approval',
       'pending.running': 'Running',
+      'approval.reject': 'Reject',
+      'approval.allow': 'Allow once',
       'time.now': 'just now',
       'time.minutes': '{n}m ago',
       'time.hours': '{n}h ago',
@@ -806,6 +971,49 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
+    /** Warning triangle for conflict rows and the conflict footer. */
+    function WarnGlyph() {
+      return h(
+        'svg',
+        {
+          width: 14,
+          height: 14,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.4,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          focusable: false,
+        },
+        h('path', { d: 'M8 2.2 14.2 13H1.8L8 2.2Z' }),
+        h('path', { d: 'M8 6.2v3.2' }),
+        h('path', { d: 'M8 11.4h.01' }),
+      );
+    }
+
+    /** Circle-check used by the checks chips (video 24s). */
+    function CheckGlyph() {
+      return h(
+        'svg',
+        {
+          width: 13,
+          height: 13,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.6,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          focusable: false,
+        },
+        h('circle', { cx: 8, cy: 8, r: 6.2 }),
+        h('path', { d: 'm5.4 8.2 1.8 1.8 3.5-3.6' }),
+      );
+    }
+
     function relativeTime(seconds, nowMs, t) {
       const elapsed = Math.max(0, Math.floor(nowMs / 1000 - seconds));
       if (elapsed < 60) return t('time.now');
@@ -822,6 +1030,24 @@ body[data-ds-dark-theme] .gcf-dock {
       if (view.phase === 'revert') return t('status.revert');
       if (view.phase === 'changes') return format(t, 'status.changes', { n: view.counts.working });
       return t('status.clean');
+    }
+
+    /** One state word for the header pill: open / conflicts / ready / merged. */
+    function stateOf(view) {
+      if (view.pr !== null && view.pr !== undefined && typeof view.pr.state === 'string') return view.pr.state;
+      if (view.phase === 'conflicts') return 'conflicts';
+      if (view.clean) return 'clean';
+      return 'changes';
+    }
+
+    function stateText(view, t) {
+      const state = stateOf(view);
+      if (state === 'merged') return t('state.merged');
+      if (state === 'ready') return t('state.ready');
+      if (state === 'open') return t('state.open');
+      if (state === 'conflicts') return format(t, 'state.conflicts', { n: view.counts.conflicts });
+      if (state === 'clean') return t('state.clean');
+      return t('state.changes');
     }
 
     function branchText(view, t) {
@@ -843,7 +1069,121 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
+    const LANE_COLORS = ['#7c5cd6', '#2f9e8f', '#4a7fdc', '#d98a2b', '#c2557a', '#5b8a3c'];
+    const LANE_WIDTH = 16;
+    const ROW_HEIGHT = 34;
+
+    function laneX(lane) {
+      return lane * LANE_WIDTH + LANE_WIDTH / 2;
+    }
+
+    function laneStroke(lane) {
+      return LANE_COLORS[Math.abs(lane) % LANE_COLORS.length];
+    }
+
+    /** One row of the commit graph: lanes, node and merge curves (video 8.6s). */
+    function GraphRail({ row }) {
+      const columns = Math.max(1, row.columns ?? 1);
+      const width = columns * LANE_WIDTH;
+      const mid = ROW_HEIGHT / 2;
+      const parts = [];
+      for (const lane of row.before ?? []) {
+        if (lane === row.lane) continue;
+        parts.push(
+          h('line', {
+            key: `b${lane}`,
+            x1: laneX(lane),
+            x2: laneX(lane),
+            y1: 0,
+            y2: ROW_HEIGHT,
+            stroke: laneStroke(lane),
+            strokeWidth: 1.5,
+          }),
+        );
+      }
+      parts.push(
+        h('line', {
+          key: 'own',
+          x1: laneX(row.lane),
+          x2: laneX(row.lane),
+          y1: 0,
+          y2: mid,
+          stroke: laneStroke(row.lane),
+          strokeWidth: 1.5,
+        }),
+      );
+      for (const parent of row.parents ?? []) {
+        if (parent === row.lane) {
+          parts.push(
+            h('line', {
+              key: `p${parent}`,
+              x1: laneX(parent),
+              x2: laneX(parent),
+              y1: mid,
+              y2: ROW_HEIGHT,
+              stroke: laneStroke(parent),
+              strokeWidth: 1.5,
+            }),
+          );
+        } else {
+          const x1 = laneX(row.lane);
+          const x2 = laneX(parent);
+          parts.push(
+            h('path', {
+              key: `c${parent}`,
+              d: `M${x1} ${mid} C ${x1} ${mid + 12}, ${x2} ${ROW_HEIGHT - 12}, ${x2} ${ROW_HEIGHT}`,
+              fill: 'none',
+              stroke: laneStroke(parent),
+              strokeWidth: 1.5,
+            }),
+          );
+        }
+      }
+      parts.push(
+        h('circle', {
+          key: 'node',
+          cx: laneX(row.lane),
+          cy: mid,
+          r: 4,
+          fill: laneStroke(row.lane),
+          stroke: 'var(--dsw-alias-bg-base, #fff)',
+          strokeWidth: 1.5,
+        }),
+      );
+      return h(
+        'svg',
+        { className: 'gcf-rail', width, height: ROW_HEIGHT, viewBox: `0 0 ${width} ${ROW_HEIGHT}`, 'aria-hidden': true },
+        parts,
+      );
+    }
+
+    function shortRef(name) {
+      return name.startsWith('origin/') ? name.slice('origin/'.length) : name;
+    }
+
     function Row({ row, t, now, index, scramble }) {
+      if (row.kind === 'operation') {
+        return h(
+          'div',
+          { className: 'gcf-row gcf-row--operation', 'data-gcf': 'row', 'data-kind': 'operation', style: { '--gcf-i': String(index) } },
+          h('span', { className: 'gcf-op-icon' }, h(WarnGlyph)),
+          h('span', { className: 'gcf-subject' }, format(t, `row.operation.${row.operation}`)),
+          h(
+            'span',
+            { className: `gcf-meta${row.conflicts > 0 ? ' is-warn' : ''}` },
+            row.conflicts > 0 ? format(t, 'row.conflicts', { n: row.conflicts }) : t('row.merging'),
+          ),
+        );
+      }
+      if (row.kind === 'conflict') {
+        return h(
+          'div',
+          { className: 'gcf-row gcf-row--conflict', 'data-gcf': 'row', 'data-kind': 'conflict', style: { '--gcf-i': String(index) } },
+          h('span', { className: 'gcf-badge', 'aria-hidden': true }, String(row.index)),
+          h('span', { className: 'gcf-subject' }, row.path),
+          h('span', { className: 'gcf-meta' }, h('code', null, row.code)),
+        );
+      }
       if (row.kind === 'working') {
         return h(
           'div',
@@ -853,7 +1193,7 @@ body[data-ds-dark-theme] .gcf-dock {
             'data-kind': 'working',
             style: { '--gcf-i': String(index) },
           },
-          h('span', { className: 'gcf-dot gcf-dot--hollow' }),
+          h('span', { className: 'gcf-rail-wait' }, h('span', { className: 'gcf-spinner' })),
           h('span', { className: 'gcf-subject' }, t('row.working')),
           h('span', { className: 'gcf-meta' }, format(t, 'row.files', { n: row.files })),
         );
@@ -861,8 +1201,21 @@ body[data-ds-dark-theme] .gcf-dock {
       return h(
         'div',
         { className: 'gcf-row', 'data-gcf': 'row', 'data-kind': 'commit', style: { '--gcf-i': String(index) } },
-        h('span', { className: 'gcf-dot' }),
-        h('span', { className: 'gcf-subject' }, scramble ? h(Scramble, { text: row.subject }) : row.subject),
+        h(GraphRail, { row }),
+        h(
+          'span',
+          { className: 'gcf-subject' },
+          scramble ? h(Scramble, { text: row.subject }) : row.subject,
+          Array.isArray(row.refs) && row.refs.length > 0
+            ? h(
+                'span',
+                { className: 'gcf-pills' },
+                row.refs.slice(0, 2).map((ref) =>
+                  h('span', { key: ref.name, className: `gcf-pill is-${ref.kind}` }, shortRef(ref.name)),
+                ),
+              )
+            : null,
+        ),
         h(
           'span',
           { className: 'gcf-meta' },
@@ -873,19 +1226,68 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function CleanBar({ view, t }) {
-      return h(
-        'div',
-        { className: 'gcf-dock', 'data-gcf': 'dock' },
+    /** Five squares sized by the add/delete ratio, like the reference's diff chip. */
+    function heatSquares(diffStat) {
+      const total = diffStat.add + diffStat.del;
+      if (total === 0) return [];
+      const addSquares = Math.round((diffStat.add / total) * 5);
+      const squares = [];
+      for (let index = 0; index < 5; index += 1) squares.push(index < addSquares ? 'is-add' : 'is-del');
+      return squares;
+    }
+
+    /** The always-present chips above the composer (video 0s / 8.6s). */
+    function Chips({ view, t, onToggle, expanded }) {
+      const chips = [
         h(
-          'div',
-          { className: 'gcf-bar', 'data-gcf': 'bar', 'data-phase': 'clean' },
-          h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
-          h('span', { className: 'gcf-label' }, branchText(view, t)),
-          h(Tracking, { view, t }),
-          h('span', { className: 'gcf-status', style: { marginLeft: 'auto' } }, h('i', null), t('status.clean')),
+          'span',
+          { key: 'state', className: `gcf-chip is-${stateOf(view)}` },
+          h('i', null),
+          stateText(view, t),
         ),
-      );
+      ];
+      if (view.branch.upstream !== null) {
+        chips.push(
+          h(
+            'span',
+            { key: 'tracking', className: 'gcf-chip gcf-chip--tracking' },
+            h('span', { className: 'gcf-upstream' }, view.branch.upstream),
+            view.branch.ahead > 0 ? h('span', { className: 'gcf-ahead' }, `\u2191${view.branch.ahead}`) : null,
+            view.branch.behind > 0 ? h('span', { className: 'gcf-behind' }, `\u2193${view.branch.behind}`) : null,
+          ),
+        );
+      }
+      if (view.diffStat.add > 0 || view.diffStat.del > 0) {
+        chips.push(
+          h(
+            'span',
+            { key: 'diff', className: 'gcf-chip gcf-chip--diff' },
+            h('b', null, `+${view.diffStat.add}`),
+            h('em', null, `\u2212${view.diffStat.del}`),
+            h(
+              'span',
+              { className: 'gcf-heat' },
+              heatSquares(view.diffStat).map((kind, index) => h('i', { key: index, className: kind })),
+            ),
+          ),
+        );
+      }
+      if (typeof onToggle === 'function') {
+        chips.push(
+          h(
+            'button',
+            {
+              key: 'toggle',
+              type: 'button',
+              className: 'gcf-chip gcf-chip--toggle',
+              'aria-expanded': expanded === true,
+              onClick: onToggle,
+            },
+            expanded === true ? t('action.collapse') : t('action.expand'),
+          ),
+        );
+      }
+      return h('div', { className: 'gcf-chips', 'data-gcf': 'chips' }, chips);
     }
 
     function RepositoryList({ repositories, t, collapsed = false, onToggle, pending }) {
@@ -968,76 +1370,92 @@ body[data-ds-dark-theme] .gcf-dock {
         }
         return null;
       }
-      if (view.phase === 'clean' && (view.pending === null || view.pending === undefined)) {
-        return h(CleanBar, { view, t });
-      }
 
-      const counts = [
-        view.counts.staged > 0 ? format(t, 'foot.staged', { n: view.counts.staged }) : null,
-        view.counts.unstaged > 0 ? format(t, 'foot.unstaged', { n: view.counts.unstaged }) : null,
-        view.counts.untracked > 0 ? format(t, 'foot.untracked', { n: view.counts.untracked }) : null,
-      ].filter((part) => part !== null);
+      const card = collapsed
+        ? null
+        : h(
+            Reveal,
+            null,
+            h(
+              'section',
+              {
+                className: `gcf-card${view.phase === 'conflicts' ? ' is-conflict' : ''}`,
+                'data-gcf': 'card',
+                'data-phase': view.phase,
+                'aria-label': t('app.title'),
+              },
+              h(CardHeader, { view, t, collapsed, onToggle, scrambleStatus: true }),
+              h(PendingLine, { pending: view.pending, t }),
+              h(
+                'div',
+                { className: 'gcf-body is-open', 'data-gcf': 'body' },
+                h(
+                  'div',
+                  { className: 'gcf-body-inner' },
+                  h(
+                    'div',
+                    { key: view.phase, className: 'gcf-swap' },
+                  h(
+                    'div',
+                    { className: 'gcf-rows', 'data-gcf': 'rows' },
+                    view.rows.map((row, index) =>
+                      h(Row, { key: row.id, row, t, now, index, scramble: index === 0 }),
+                    ),
+                    (view.conflictRows ?? []).map((row, index) =>
+                      h(Row, { key: row.id, row: { ...row, kind: 'conflict' }, t, now, index: index + view.rows.length }),
+                    ),
+                  ),
+                  view.hiddenCommits > 0
+                    ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
+                    : null,
+                  Array.isArray(view.checks) && view.checks.length > 0
+                    ? h(
+                        'div',
+                        { className: 'gcf-checks', 'data-gcf': 'checks' },
+                        view.checks.map((check) =>
+                          h(
+                            'span',
+                            { key: check.id, className: `gcf-check is-${check.state ?? 'passed'}` },
+                            h(CheckGlyph),
+                            h('span', { className: 'gcf-check-label' }, check.label),
+                          ),
+                        ),
+                      )
+                    : null,
+                  h(
+                    'footer',
+                    { className: 'gcf-foot' },
+                    h(
+                      'span',
+                      { className: `gcf-foot-state is-${stateOf(view)}` },
+                      h('i', null),
+                      view.counts.conflicts > 0
+                        ? format(t, 'foot.conflicts', { n: view.counts.conflicts })
+                        : statusText(view, t),
+                    ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: `gcf-action${view.counts.conflicts > 0 ? ' is-warn' : ''}`,
+                        disabled: true,
+                        title: t('action.pending'),
+                        'data-gcf': view.counts.conflicts > 0 ? 'resolve' : 'commit',
+                      },
+                      view.counts.conflicts > 0 ? t('action.resolve') : t('action.commit'),
+                    ),
+                  ),
+                  ),
+                ),
+              ),
+            ),
+          );
 
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
-        h(Reveal, null,
-        h(
-          'section',
-          {
-            className: `gcf-card${view.phase === 'conflicts' ? ' is-conflict' : ''}`,
-            'data-gcf': 'card',
-            'data-phase': view.phase,
-            'aria-label': t('app.title'),
-          },
-          h(CardHeader, { view, t, collapsed, onToggle, scrambleStatus: true }),
-          h(PendingLine, { pending: view.pending, t }),
-          h(
-            'div',
-            {
-              className: `gcf-body${collapsed ? '' : ' is-open'}`,
-              'data-gcf': 'body',
-              'aria-hidden': collapsed,
-            },
-            h(
-              'div',
-              { className: 'gcf-body-inner' },
-              h(
-                'div',
-                { className: 'gcf-rows', 'data-gcf': 'rows' },
-                view.rows.map((row, index) =>
-                  h(Row, { key: row.id, row, t, now, index, scramble: index === 0 }),
-                ),
-              ),
-              view.hiddenCommits > 0
-                ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
-                : null,
-              h(
-                'footer',
-                { className: 'gcf-foot' },
-                h(
-                  'span',
-                  { className: 'gcf-diff' },
-                  h('b', { key: `a${view.diffStat.add}`, className: 'gcf-num' }, `+${view.diffStat.add}`),
-                  h('em', { key: `d${view.diffStat.del}`, className: 'gcf-num' }, `−${view.diffStat.del}`),
-                ),
-                h('span', { className: 'gcf-counts' }, counts.join(' · ')),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'gcf-action',
-                    disabled: true,
-                    title: t('action.pending'),
-                    'data-gcf': 'commit',
-                  },
-                  t('action.commit'),
-                ),
-              ),
-            ),
-          ),
-        ),
-        ),
+        card,
+        h(Chips, { view, t, onToggle, expanded: !collapsed }),
       );
     }
 
@@ -1103,16 +1521,13 @@ body[data-ds-dark-theme] .gcf-dock {
       }, []);
 
       const view = live ?? projected;
-      React.useEffect(() => {
-        publishPendingState(sessionId, view);
-      }, [sessionId, view]);
       return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle });
     }
 
     return {
       inject: ['slots', 'locale', 'sessions'],
       /** Exposed for the contract smoke test; the module loader ignores extra fields. */
-      components: { GitFlowView, GitFlowDock, PendingOverlay },
+      components: { GitFlowView, GitFlowDock, GitFlowApproval },
       apply(ctx) {
         ctx.effect(
           () => ctx.locale.register(NS, { zh, en }),
@@ -1150,12 +1565,25 @@ body[data-ds-dark-theme] .gcf-dock {
             GitFlowDock,
           ),
         );
-        // The approval panel replaces the composer fallback, which unmounts the
-        // dock; this frame-wide entry keeps the pending card visible instead.
-        ctx.slots.inject('shell.overlay', () =>
+        // Take over the composer only for our own approvals: the card carries
+        // the decision, so it stays in place and the chat area makes room for
+        // it instead of the stock panel replacing the input area.
+        ctx.slots.inject('conversation.composer', () =>
           ctx.slots.register(
-            { name: 'shell.overlay', id: 'git-control-flow-pending', order: 50, locale: NS },
-            PendingOverlay,
+            {
+              name: 'conversation.composer',
+              // Chain entries are tried in ascending priority and the first
+              // non-null selection wins; the stock approval panel sits at 1,
+              // so ours has to be tried before it.
+              priority: 0.5,
+              locale: NS,
+              select: ({ pendingInteraction }) => {
+                if (pendingInteraction === null || pendingInteraction === undefined) return null;
+                if (pendingInteraction.kind !== 'approval') return null;
+                return pendingInteraction.toolName === 'git_flow' ? pendingInteraction : null;
+              },
+            },
+            GitFlowApproval,
           ),
         );
       },

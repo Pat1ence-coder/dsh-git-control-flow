@@ -127,6 +127,39 @@ test('absent and unknown states yield minimal, distinct views', () => {
   assert.equal(validateGitFlowView(unknown).ok, true);
 });
 
+test('an operation row and numbered conflict rows are exposed', () => {
+  const view = buildGitFlowView(
+    state(
+      snapshot({
+        operation: 'merge',
+        clean: false,
+        counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 2, working: 2 },
+        conflicts: {
+          count: 2,
+          files: [
+            { path: 'src/auth.ts', code: 'UU', kind: 'conflict' },
+            { path: 'src/middleware.ts', code: 'AA', kind: 'conflict' },
+          ],
+        },
+        recentCommits: [],
+      }),
+    ),
+  );
+
+  assert.equal(view.rows[0].kind, 'operation');
+  assert.equal(view.rows[0].operation, 'merge');
+  assert.equal(view.rows[0].conflicts, 2);
+  assert.equal(view.conflictRows.length, 2);
+  assert.deepEqual(
+    view.conflictRows.map((row) => [row.index, row.path, row.code]),
+    [
+      [1, 'src/auth.ts', 'UU'],
+      [2, 'src/middleware.ts', 'AA'],
+    ],
+  );
+  assert.equal(validateGitFlowView(view).ok, true);
+});
+
 test('a pending write is carried through the view even before any read', () => {
   const pending = { phase: 'awaiting-approval', action: 'commit', reason: 'Commit 1 staged file(s) on main.' };
   const view = buildGitFlowView({ presence: 'unknown', status: null, revision: 0, updatedAt: null, pending });

@@ -132,19 +132,29 @@ plugin.apply(ctx);
 
 check(injectedSlots.length === 2, `injected slots: ${injectedSlots.join(',')}`);
 check(injectedSlots.includes('conversation.input.dock'), 'the dock slot must be injected');
-check(injectedSlots.includes('shell.overlay'), 'the overlay slot must be injected');
+check(injectedSlots.includes('conversation.composer'), 'the composer slot must be injected');
 check(registered.length === 2, `expected 2 slot registrations, got ${registered.length}`);
 
 const entry = registered.find((item) => item.options.name === 'conversation.input.dock');
-const overlayEntry = registered.find((item) => item.options.name === 'shell.overlay');
+const approvalEntry = registered.find((item) => item.options.name === 'conversation.composer');
 check(entry?.options?.name === 'conversation.input.dock', 'slot name must be conversation.input.dock');
 check(entry?.options?.id === 'git-control-flow', `slot id is ${entry?.options?.id}`);
 check(entry?.options?.order === 10, `slot order is ${entry?.options?.order}`);
 check(entry?.options?.locale === 'gitControlFlow', `slot locale is ${entry?.options?.locale}`);
 check(typeof entry?.options?.inject === 'function', 'slot registration must inject props');
 check(entry?.Component === plugin.components.GitFlowDock, 'the dock component must be registered');
-check(overlayEntry?.options?.id === 'git-control-flow-pending', 'the overlay entry needs its own id');
-check(overlayEntry?.Component === plugin.components.PendingOverlay, 'the overlay component must be registered');
+check(approvalEntry?.Component === plugin.components.GitFlowApproval, 'the approval component must be registered');
+check(
+  approvalEntry?.options?.priority === 0.5,
+  'the approval takeover must be tried before the stock panel (priority 1)',
+);
+
+const select = approvalEntry?.options?.select;
+const ourApproval = { kind: 'approval', toolName: 'git_flow', reason: 'Stage 1 path(s)' };
+check(select?.({ pendingInteraction: ourApproval }) === ourApproval, 'our approval is selected');
+check(select?.({ pendingInteraction: { kind: 'approval', toolName: 'bash' } }) === null, 'other approvals keep the stock panel');
+check(select?.({ pendingInteraction: { kind: 'question', toolName: 'git_flow' } }) === null, 'only approvals are taken over');
+check(select?.({ pendingInteraction: null }) === null, 'no pending interaction selects nothing');
 
 const props = entry?.options?.inject?.('session-test');
 check(props?.projection === null, 'a missing session binding injects a null projection');
@@ -192,7 +202,19 @@ const dirtyView = {
   diffStat: { add: 12, del: 3 },
   rows: [
     { kind: 'working', id: 'working', files: 2 },
-    { kind: 'commit', id: 'abc1234', subject: 'fix: something', author: 'You', time: Math.floor(now / 1000) - 120 },
+    {
+      kind: 'commit',
+      id: 'abc1234',
+      subject: 'fix: something',
+      author: 'You',
+      time: Math.floor(now / 1000) - 120,
+      refs: [{ name: 'main', kind: 'head' }],
+      lane: 0,
+      parents: [0],
+      before: [0],
+      after: [0],
+      columns: 1,
+    },
   ],
   hiddenCommits: 3,
 };
@@ -202,6 +224,14 @@ const conflictView = {
   phase: 'conflicts',
   operation: 'merge',
   counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 2, working: 2 },
+  rows: [
+    { kind: 'operation', id: 'op:merge', operation: 'merge', conflicts: 2 },
+    { kind: 'working', id: 'working', files: 2 },
+  ],
+  conflictRows: [
+    { id: 'c:1', index: 1, path: 'src/auth.ts', code: 'UU' },
+    { id: 'c:2', index: 2, path: 'src/middleware.ts', code: 'AA' },
+  ],
 };
 
 function render(view) {
@@ -228,7 +258,7 @@ check(repositories.includes('alpha') && repositories.includes('status.changes'),
 check(repositories.includes('beta') && repositories.includes('status.clean'), 'a clean repository shows its state');
 
 const clean = render(cleanView);
-check(clean.includes('gcf-bar') && !clean.includes('gcf-card'), 'clean renders the slim bar, not the card');
+check(clean.includes('gcf-card') && clean.includes('gcf-chips'), 'clean renders the card and the chips');
 check(clean.includes('status.clean'), 'clean renders its status label');
 check(clean.includes('feat/x'), 'clean renders the branch name');
 check(clean.includes('gcf-ahead') && clean.includes('↑1'), 'clean shows the ahead count as an arrow');
@@ -247,22 +277,43 @@ check(dirty.includes('gcf-card'), 'dirty renders the card');
 check(dirty.includes('gcf-rows'), 'dirty renders rows');
 check(dirty.includes('row.working'), 'dirty leads with the working row');
 check(dirty.includes('fix: something'), 'dirty renders commit subjects');
+check(dirty.includes('gcf-rail'), 'commit rows draw the graph rail');
+check(dirty.includes('gcf-pill'), 'commit rows render branch pills');
 check(dirty.includes('rows.more'), 'dirty reports hidden commits');
 check(dirty.includes('+12') && dirty.includes('−3'), 'dirty renders the diff stat');
-check(dirty.includes('foot.staged') && dirty.includes('foot.unstaged'), 'dirty renders bucket counts');
+check(dirty.includes('status.changes'), 'dirty renders its state in the footer');
 check(dirty.includes('action.commit'), 'dirty renders the primary action');
 check(dirty.includes('"disabled":true'), 'the primary action is disabled');
 
 const conflict = render(conflictView);
 check(conflict.includes('"data-phase":"conflicts"'), 'conflicts set the phase attribute');
 check(conflict.includes('is-conflict'), 'conflicts set the conflict class');
-check(conflict.includes('status.conflicts'), 'conflicts render the conflict label');
+check(conflict.includes('foot.conflicts'), 'conflicts render the conflict summary in the footer');
+check(conflict.includes('gcf-row--conflict'), 'conflicts render the conflict file rows');
+check(conflict.includes('gcf-badge'), 'conflicts number their rows with badges');
+check(conflict.includes('1') && conflict.includes('2'), 'both conflict numbers are rendered');
+check(conflict.includes('action.resolve'), 'conflicts offer the resolve action');
+
+const readyView = {
+  ...cleanView,
+  phase: 'ready',
+  checks: [
+    { id: 'tests', label: 'Tests 42 passed', state: 'passed' },
+    { id: 'lint', label: 'Lint passed', state: 'passed' },
+    { id: 'types', label: 'Types failed', state: 'failed' },
+  ],
+};
+const ready = render(readyView);
+check(ready.includes('gcf-checks'), 'checks render as chips');
+check(ready.includes('Tests 42 passed'), 'a passing check shows its label');
+check(ready.includes('gcf-check is-failed'), 'a failing check is marked');
+check(ready.includes('gcf-swap'), 'the card body carries the decode transition');
 
 const expanded = JSON.stringify(
   GitFlowView({ view: dirtyView, t, now, collapsed: false, onToggle: () => {} }),
 );
 check(expanded.includes('gcf-card'), 'an expanded card renders the card');
-check(expanded.includes('gcf-toggle'), 'an expanded card renders the toggle');
+check(expanded.includes('gcf-chips'), 'an expanded card keeps the chips row');
 check(expanded.includes('"aria-expanded":true'), 'the toggle reports the expanded state');
 check(expanded.includes('action.collapse'), 'the expanded toggle offers to collapse');
 check(expanded.includes('"className":"gcf-body is-open"'), 'an expanded card opens its body');
@@ -270,13 +321,11 @@ check(expanded.includes('"className":"gcf-body is-open"'), 'an expanded card ope
 const collapsed = JSON.stringify(
   GitFlowView({ view: dirtyView, t, now, collapsed: true, onToggle: () => {} }),
 );
-check(collapsed.includes('gcf-card'), 'a collapsed card keeps the same card shell (no swap)');
-check(collapsed.includes('"className":"gcf-body"'), 'a collapsed card closes its body');
-check(collapsed.includes('"aria-hidden":true'), 'a collapsed body is hidden from assistive tech');
-check(collapsed.includes('gcf-toggle'), 'a collapsed card keeps the toggle');
-check(collapsed.includes('"aria-expanded":false'), 'the toggle reports the collapsed state');
-check(collapsed.includes('action.expand'), 'the collapsed toggle offers to expand');
-check(collapsed.includes('status.changes'), 'a collapsed card still shows the status');
+check(!collapsed.includes('gcf-card'), 'a collapsed card renders no card');
+check(collapsed.includes('gcf-chips'), 'a collapsed card keeps the chips row');
+check(collapsed.includes('"aria-expanded":false'), 'the chips toggle reports the collapsed state');
+check(collapsed.includes('action.expand'), 'the chips toggle offers to expand');
+check(collapsed.includes('state.changes'), 'the chips still show the state');
 
 const reposExpanded = JSON.stringify(
   GitFlowView({
@@ -339,18 +388,47 @@ const runningPending = render({
 });
 check(runningPending.includes('pending.running'), 'a running write is labelled as running');
 
-const { PendingOverlay } = plugin.components;
-check(PendingOverlay({ t, view: null }) === null, 'the overlay renders nothing without a view');
-check(
-  PendingOverlay({ t, view: { ...dirtyView, pending: null } }) === null,
-  'the overlay renders nothing when no write is pending',
+const { GitFlowApproval } = plugin.components;
+const answers = [];
+const approvalHtml = JSON.stringify(
+  GitFlowApproval({
+    t,
+    matched: {
+      sessionId: 'session-test',
+      reason: 'Stage 1 path(s) in test: test.txt',
+      answer: (outcome) => answers.push(outcome),
+    },
+  }),
 );
+check(approvalHtml.includes('gcf-approval'), 'the approval renders as the card shell');
+check(approvalHtml.includes('gcf-card'), 'the approval keeps the card chrome');
+check(approvalHtml.includes('pending.awaiting'), 'the approval shows the waiting state');
+check(approvalHtml.includes('Stage 1 path'), 'the approval shows its reason in the card');
+check(approvalHtml.includes('approval.reject'), 'the approval offers reject');
+check(approvalHtml.includes('approval.allow'), 'the approval offers allow once');
+check(approvalHtml.includes('"data-gcf":"reject"') && approvalHtml.includes('"data-gcf":"allow"'), 'both decisions are buttons');
 
-const overlay = JSON.stringify(PendingOverlay({ t, view: { ...dirtyView, pending: pendingWrite } }));
-check(overlay.includes('gcf-overlay'), 'the overlay renders a floating card during approval');
-check(overlay.includes('pending.awaiting'), 'the overlay shows the approval state');
-check(overlay.includes('Stage 1 path'), 'the overlay shows the approval reason');
-check(overlay.includes('feat/x'), 'the overlay shows the branch');
+function findBy(node, predicate) {
+  if (node === null || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findBy(child, predicate);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (predicate(node)) return node;
+  return findBy(node.children, predicate);
+}
+
+const approvalTree = GitFlowApproval({
+  t,
+  matched: { sessionId: 'session-test', reason: 'Stage 1 path(s)', answer: (outcome) => answers.push(outcome) },
+});
+findBy(approvalTree, (node) => node?.props?.['data-gcf'] === 'allow')?.props?.onClick?.();
+check(answers.at(-1) === 'allowed-once', 'allow answers allowed-once');
+findBy(approvalTree, (node) => node?.props?.['data-gcf'] === 'reject')?.props?.onClick?.();
+check(answers.at(-1) === 'rejected', 'reject answers rejected');
 
 if (failures.length > 0) {
   console.error('FAIL');
