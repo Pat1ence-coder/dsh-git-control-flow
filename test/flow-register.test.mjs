@@ -59,6 +59,10 @@ function harness({ readStatus, agents, connection } = {}) {
       callback();
       return () => {};
     },
+    inject(_deps, callback) {
+      callback(ctx);
+      return () => {};
+    },
   };
 
   if (connection !== undefined) {
