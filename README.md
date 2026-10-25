@@ -48,6 +48,8 @@ test/               real-Git status tests, projection/register tests, client smo
 
 ## Install
 
+> A locally linked bundle must declare every Harness package it imports under `peerDependencies`; the profile's module-resolution router only redirects an import for a linked root when that root declares the name. `@deepseek-ai/dsh-tools` is declared for this reason. `engines.dsh` pins the compatible runtime range.
+
 Target: the `web` DSH profile, as a local bundle whose patch inserts the `git-control-flow` row. The install itself escalates plugin management to full access, so it waits for explicit approval; nothing is installed yet.
 
 ```bash
