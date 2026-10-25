@@ -10,7 +10,7 @@ Generative Git workflow card for the DSH Web conversation: a strip that grows ou
 |---|---|---|
 | 1 | Bundle skeleton + dock seat | written, install pending approval |
 | 2a | Git read layer: `runGit`, porcelain v2 / numstat / log parsers, status snapshot | done, 8 real-Git tests |
-| 2b | `git_flow` tool + `gitFlow` projection + wire | pending |
+| 2b | `git_flow` tool + `gitFlow` projection + `/git-flow` command | done, 15 offline tests |
 | 3 | Card rendering (graph lanes, rows, tags, chips) | pending |
 | 4 | Motion (grow, stagger, scramble, progress, fold) | pending |
 | 5 | Mutations (stage / commit / merge / resolve) + approval | pending |
@@ -21,14 +21,20 @@ Generative Git workflow card for the DSH Web conversation: a strip that grows ou
 ```
 package.json        bundle manifest (dsh.bundle.patch + dsh.client)
 cordis.patch.yml    one inserted row: git-control-flow
-index.js            Host half (empty in step 1)
+index.js            Host half: harness imports only, delegates to lib/flow/register
 client.js           Client half: conversation.input.dock strip
 lib/git/exec.mjs    argv-only git runner (no shell, bounded, timed out)
 lib/git/parse.mjs   porcelain v2 / numstat / log parsers (pure)
 lib/git/status.mjs  whole-value GitStatusSnapshot reader
+lib/flow/contract.mjs  tool name, command name, parameter spec
+lib/flow/state.mjs     gitFlow state, pure fold, structural validation
+lib/flow/schema.mjs    ZodType-compatible subset (parse/safeParse), zero deps
+lib/flow/projection.mjs session projection definition + identity wire view
+lib/flow/register.mjs   registration body, injectable for offline tests
+lib/flow/render.mjs     snapshot → compact text (model result, command)
 locale/{en,zh}.json Plugin Manager display metadata
 icon.svg            original artwork
-test/               real-Git status tests + client contract smoke test
+test/               real-Git status tests, projection/register tests, client smoke test
 ```
 
 ## Development notes
@@ -52,6 +58,6 @@ Target: the `web` DSH profile, as a local bundle whose patch inserts the `git-co
 ## Local checks
 
 ```bash
-npm run check   # node --check on both module halves and the git layer
-npm test        # 8 real-Git status tests + client contract smoke test
+npm run check   # node --check across both halves, the git layer and the flow layer
+npm test        # 23 tests: real-Git status, projection/register wiring, client contract
 ```
