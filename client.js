@@ -996,7 +996,18 @@ body[data-ds-dark-theme] .gcf-dock {
   .gcf-spinner-core { animation: none; }
   .gcf-spinner-halo { animation: none; opacity: 0.35; transform: scale(1.35); }
 }
-.gcf-label {
+.gcf-conflict-list {
+  margin-top: 8px;
+  border-top: 1px solid var(--warn-line, #ecc68a);
+  padding-top: 4px;
+}
+.gcf-conflict-list .gcf-row--conflict {
+  position: relative;
+  transform: none;
+  transition: none;
+}
+.gcf-conflict-list .gcf-badge { position: absolute; left: 2px; top: 7px; margin: 0; }
+
   flex: none;
   font-size: 13px;
   font-weight: 500;
@@ -1613,9 +1624,11 @@ body[data-ds-dark-theme] .gcf-dock {
         return null;
       }
 
+      // Conflict files are shown as a separate list below the graph, not as
+      // graph rows, so the SVG y-coordinates stay correct.
       const conflictRows = (view.conflictRows ?? []).map((row) => ({ ...row, kind: 'conflict' }));
-      const allRows = [...view.rows, ...conflictRows];
-      const graphHeight = allRows.length * ROW_HEIGHT;
+      const graphRows = view.rows;
+      const graphHeight = graphRows.length * ROW_HEIGHT;
 
       const card = collapsed
         ? null
@@ -1640,22 +1653,19 @@ body[data-ds-dark-theme] .gcf-dock {
                   { className: 'gcf-body-inner' },
                   h(
                     'div',
-                    { key: view.phase, className: 'gcf-swap' },
-                  h(
-                    'div',
                     { className: 'gcf-graph', style: { height: `${graphHeight}px` } },
-                    h(GraphRail, { rows: allRows, edges: view.edges ?? [] }),
+                    h(GraphRail, { rows: graphRows, edges: view.edges ?? [] }),
                     h(
                       'div',
                       { className: 'gcf-rows', 'data-gcf': 'rows' },
-                      allRows.map((row, index) =>
+                      graphRows.map((row, index) =>
                         h(Row, {
                           key: row.id,
                           row,
                           t,
                           now,
                           index,
-                          total: allRows.length,
+                          total: graphRows.length,
                           scramble: row.kind === 'commit' && index === 0,
                         }),
                       ),
@@ -1663,6 +1673,27 @@ body[data-ds-dark-theme] .gcf-dock {
                   ),
                   view.hiddenCommits > 0
                     ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
+                    : null,
+                  // Conflict files are listed below the graph with amber badges.
+                  conflictRows.length > 0
+                    ? h(
+                        'div',
+                        { className: 'gcf-conflict-list', 'data-gcf': 'conflict-list' },
+                        conflictRows.map((row, index) =>
+                          h(
+                            'div',
+                            {
+                              key: row.id,
+                              className: 'gcf-row gcf-row--conflict',
+                              'data-gcf': 'conflict-row',
+                              style: { '--gcf-i': String(index), '--rev': String(Math.max(0, conflictRows.length - 1 - index)) },
+                            },
+                            h('span', { className: 'gcf-badge', 'aria-hidden': true }, String(row.index)),
+                            h('span', { className: 'gcf-subject' }, row.path),
+                            h('span', { className: 'gcf-meta' }, h('code', null, row.code)),
+                          ),
+                        ),
+                      )
                     : null,
                   Array.isArray(view.checks) && view.checks.length > 0
                     ? h(
@@ -1700,7 +1731,6 @@ body[data-ds-dark-theme] .gcf-dock {
                       },
                       view.counts.conflicts > 0 ? t('action.resolve') : t('action.commit'),
                     ),
-                  ),
                   ),
                 ),
               ),

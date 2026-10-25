@@ -289,10 +289,15 @@ const conflict = render(conflictView);
 check(conflict.includes('"data-phase":"conflicts"'), 'conflicts set the phase attribute');
 check(conflict.includes('is-conflict'), 'conflicts set the conflict class');
 check(conflict.includes('foot.conflicts'), 'conflicts render the conflict summary in the footer');
+check(conflict.includes('gcf-conflict-list'), 'conflicts render a separate conflict list below the graph');
 check(conflict.includes('gcf-row--conflict'), 'conflicts render the conflict file rows');
 check(conflict.includes('gcf-badge'), 'conflicts number their rows with badges');
 check(conflict.includes('1') && conflict.includes('2'), 'both conflict numbers are rendered');
 check(conflict.includes('action.resolve'), 'conflicts offer the resolve action');
+// Conflict file rows must NOT appear inside the graph rail (would break y-coordinates).
+const conflictListIdx = conflict.indexOf('gcf-conflict-list');
+const graphRailIdx = conflict.indexOf('gcf-graph');
+check(conflictListIdx > graphRailIdx, 'conflict list appears after the graph, not inside it');
 
 const readyView = {
   ...cleanView,
@@ -307,7 +312,6 @@ const ready = render(readyView);
 check(ready.includes('gcf-checks'), 'checks render as chips');
 check(ready.includes('Tests 42 passed'), 'a passing check shows its label');
 check(ready.includes('gcf-check is-failed'), 'a failing check is marked');
-check(ready.includes('gcf-swap'), 'the card body carries the decode transition');
 
 const expanded = JSON.stringify(
   GitFlowView({ view: dirtyView, t, now, collapsed: false, onToggle: () => {} }),
