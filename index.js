@@ -1,26 +1,42 @@
 /**
  * Host half of `@local/dsh-git-control-flow`.
  *
- * Step 2b registers three things, all of them read-only:
- *  - the `gitFlow` session projection (the card's only data source);
- *  - the `git_flow` model tool (returns a whole-value status snapshot);
- *  - the `/git-flow` command (same reader, for the UI and for humans).
+ * Registers:
+ *  - the `gitFlow` session projection (the card's data source);
+ *  - the `git_flow` model tool: one read (`status`) and two approval-gated
+ *    writes (`stage`, `commit`);
+ *  - the `/git-flow` command (read-only, for humans);
+ *  - a read-only status route for the Client card.
  *
  * The working directory always comes from the session, never from model
- * arguments, and no write command exists here yet.
+ * arguments. Writes ask the configured approval answerer first and never push.
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
 import { readGitStatus } from './lib/git/status.mjs';
+import { runGit } from './lib/git/exec.mjs';
+import { discoverRepositories } from './lib/git/discover.mjs';
 import { registerGitFlow } from './lib/flow/register.mjs';
 
 export const name = 'git-control-flow';
 
-export const inject = ['agents', 'commands', 'sessionProjections', 'tools', 'workingDirectory'];
+export const inject = [
+  'agents',
+  'approval',
+  'commands',
+  'sessionProjections',
+  'tools',
+  'workingDirectory',
+];
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  */
 export function apply(ctx) {
-  registerGitFlow(ctx, { defineTool, readStatus: readGitStatus });
+  registerGitFlow(ctx, {
+    defineTool,
+    readStatus: readGitStatus,
+    runGit,
+    discover: (directory, options) => discoverRepositories(directory, { runGit, ...options }),
+  });
 }

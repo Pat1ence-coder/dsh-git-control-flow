@@ -29,7 +29,7 @@ function snapshot(overrides = {}) {
 }
 
 /** Minimal Cordis-like context that records what the plugin registers. */
-function harness({ readStatus, agents, connection } = {}) {
+function harness({ readStatus, agents, connection, runGit, approval, discover } = {}) {
   const captured = {};
   const effects = [];
   const calls = [];
@@ -75,6 +75,7 @@ function harness({ readStatus, agents, connection } = {}) {
       },
     };
   }
+  if (approval !== undefined) ctx.approval = approval;
 
   const deps = {
     defineTool: (options) => options,
@@ -84,6 +85,12 @@ function harness({ readStatus, agents, connection } = {}) {
         calls.push({ directory, options });
         return snapshot({ root: directory });
       }),
+    runGit:
+      runGit ??
+      (async () => {
+        return { code: 0, stdout: '', stderr: '' };
+      }),
+    discover,
   };
 
   registerGitFlow(ctx, deps);
@@ -104,9 +111,9 @@ test('registers the projection, the tool and the command as effects', () => {
   assert.equal(captured.command.name, 'git-flow');
 });
 
-test('the tool declares a single status action', () => {
+test('the tool declares one read and two approval-gated writes', () => {
   const { captured } = harness();
-  assert.deepEqual(captured.tool.parameters.action.enum, ['status']);
+  assert.deepEqual(captured.tool.parameters.action.enum, ['status', 'stage', 'commit']);
   assert.equal(captured.tool.parameters.action.required, true);
   assert.deepEqual(captured.tool.output.schema, { type: 'json' });
 });
@@ -131,7 +138,7 @@ test('the tool reports a non-repository without throwing', async () => {
     { action: 'status' },
     { agent: { session: { cwd: '/plain' } }, signal: new AbortController().signal },
   );
-  assert.deepEqual(value, { kind: 'not-a-repository' });
+  assert.deepEqual(value, { kind: 'not-a-repository', repositories: [] });
 });
 
 test('the tool rejects a missing agent and an unknown action', async () => {
@@ -252,4 +259,41 @@ test('the status route reports a non-repository and a failed read', async () => 
   );
   assert.equal(failingResponse.status, 500);
   assert.match((await failingResponse.json()).error, /git exploded/);
+});
+
+// Discovery: a container directory reports the repositories one level down.
+test('a non-repository session reports the repositories found one level down', async () => {
+  const { captured } = harness({
+    readStatus: async () => null,
+    agents: { get: () => ({ session: { cwd: '/container' } }) },
+    connection: {},
+    discover: async (directory) => [
+      { name: 'alpha', branch: 'main', detached: false, changed: 2, clean: false },
+      { name: 'beta', branch: 'feat/x', detached: false, changed: 0, clean: true },
+    ],
+  });
+
+  const response = await captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=s'),
+  );
+  const view = await response.json();
+  assert.equal(view.presence, 'absent');
+  assert.deepEqual(view.repositories.map((repo) => repo.name), ['alpha', 'beta']);
+  assert.equal(view.repositories[0].changed, 2);
+  assert.equal(view.repositories[1].clean, true);
+});
+
+test('the tool reports discovered repositories instead of a bare not-a-repository', async () => {
+  const { captured } = harness({
+    readStatus: async () => null,
+    discover: async () => [{ name: 'alpha', branch: 'main', detached: false, changed: 1, clean: false }],
+  });
+
+  const value = await captured.tool.execute(
+    { action: 'status' },
+    { agent: { session: { cwd: '/container' } }, signal: new AbortController().signal },
+  );
+  assert.equal(value.kind, 'not-a-repository');
+  assert.equal(value.repositories.length, 1);
+  assert.equal(value.repositories[0].name, 'alpha');
 });

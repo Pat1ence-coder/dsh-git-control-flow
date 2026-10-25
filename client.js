@@ -210,6 +210,44 @@ window.__ModuleLoader__.load({
   font: 10px/1.5 var(--dsh-mono-font, "SFMono-Regular", Menlo, Consolas, monospace);
   color: var(--dsw-alias-label-tertiary, #a6a6a6);
 }
+.gcf-repo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  padding: 0 14px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary, #1d1d1f);
+  animation: gcf-row-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--gcf-i, 0) * 24ms);
+}
+.gcf-repo-row:hover { background: var(--dsw-alias-bg-layer-2, #f6f6f6); }
+.gcf-repo-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.gcf-repo-branch {
+  flex: none;
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 11px/1.5 var(--dsh-mono-font, "SFMono-Regular", Menlo, Consolas, monospace);
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.gcf-repo-state {
+  flex: none;
+  min-width: 56px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.gcf-repo-state.is-dirty { color: var(--gcf-node-warn, #dca329); }
 .gcf-more {
   padding: 0 14px 8px;
   font-size: 11px;
@@ -305,11 +343,13 @@ body[data-ds-dark-theme] .gcf-dock {
       'row.working': '未提交的改动',
       'row.files': '{n} 个文件',
       'rows.more': '还有 {n} 条提交',
+      'repos.title': '{n} 个 Git 仓库',
+      'branch.detachedShort': '游离 HEAD',
       'foot.staged': '暂存 {n}',
       'foot.unstaged': '未暂存 {n}',
       'foot.untracked': '未跟踪 {n}',
       'action.commit': '提交',
-      'action.pending': '写操作将在后续步骤开放',
+      'action.pending': '写操作由 AI 在对话中执行，需你审批',
       'time.now': '刚刚',
       'time.minutes': '{n} 分钟前',
       'time.hours': '{n} 小时前',
@@ -320,8 +360,8 @@ body[data-ds-dark-theme] .gcf-dock {
       'app.title': 'Git workflow',
       'branch.detached': 'detached HEAD @ {oid}',
       'branch.unknown': 'unknown branch',
-      'tracking.ahead': '领先上游的提交数',
-      'tracking.behind': '落后上游的提交数',
+      'tracking.ahead': 'Commits ahead of upstream',
+      'tracking.behind': 'Commits behind upstream',
       'status.clean': 'Clean',
       'status.changes': '{n} changes',
       'status.conflicts': '{n} conflicts',
@@ -332,11 +372,13 @@ body[data-ds-dark-theme] .gcf-dock {
       'row.working': 'Uncommitted changes',
       'row.files': '{n} files',
       'rows.more': '{n} more commits',
+      'repos.title': '{n} Git repositories',
+      'branch.detachedShort': 'detached HEAD',
       'foot.staged': 'staged {n}',
       'foot.unstaged': 'unstaged {n}',
       'foot.untracked': 'untracked {n}',
       'action.commit': 'Commit',
-      'action.pending': 'Write actions arrive in a later step',
+      'action.pending': 'The AI performs writes in the conversation, with your approval',
       'time.now': 'just now',
       'time.minutes': '{n}m ago',
       'time.hours': '{n}h ago',
@@ -516,9 +558,52 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
+    function RepositoryList({ repositories, t }) {
+      return h(
+        'div',
+        { className: 'gcf-dock', 'data-gcf': 'dock' },
+        h(
+          'section',
+          { className: 'gcf-card', 'data-gcf': 'repositories' },
+          h(
+            'header',
+            { className: 'gcf-head' },
+            h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+            h('span', { className: 'gcf-title' }, format(t, 'repos.title', { n: repositories.length })),
+          ),
+          h(
+            'div',
+            { className: 'gcf-rows' },
+            repositories.map((repo, index) =>
+              h(
+                'div',
+                {
+                  key: repo.name,
+                  className: 'gcf-repo-row',
+                  'data-gcf': 'repo',
+                  style: { '--gcf-i': String(index) },
+                },
+                h('span', { className: 'gcf-repo-name' }, repo.name),
+                h('span', { className: 'gcf-repo-branch' }, repo.detached ? t('branch.detachedShort') : repo.branch ?? t('branch.unknown')),
+                h(
+                  'span',
+                  { className: `gcf-repo-state${repo.clean ? '' : ' is-dirty'}` },
+                  repo.clean ? t('status.clean') : format(t, 'status.changes', { n: repo.changed }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     function GitFlowView({ view, t, now }) {
       if (view === undefined || view === null) return null;
-      if (view.presence !== 'repo') return null;
+      if (view.presence !== 'repo') {
+        return Array.isArray(view.repositories) && view.repositories.length > 0
+          ? h(RepositoryList, { repositories: view.repositories, t })
+          : null;
+      }
       if (view.phase === 'clean') return h(CleanBar, { view, t });
 
       const counts = [

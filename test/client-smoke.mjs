@@ -208,6 +208,20 @@ check(render(null) === 'null', 'no projection renders nothing');
 check(render({ presence: 'unknown', revision: 0, updatedAt: null }) === 'null', 'unknown renders nothing');
 check(render({ presence: 'absent', revision: 0, updatedAt: null }) === 'null', 'absent renders nothing');
 
+const repositories = render({
+  presence: 'absent',
+  revision: 0,
+  updatedAt: null,
+  repositories: [
+    { name: 'alpha', branch: 'main', detached: false, changed: 2, clean: false },
+    { name: 'beta', branch: 'feat/x', detached: false, changed: 0, clean: true },
+  ],
+});
+check(repositories.includes('gcf-repo-row'), 'discovered repositories render as rows');
+check(repositories.includes('repos.title'), 'discovered repositories render a title');
+check(repositories.includes('alpha') && repositories.includes('status.changes'), 'a dirty repository shows its change count');
+check(repositories.includes('beta') && repositories.includes('status.clean'), 'a clean repository shows its state');
+
 const clean = render(cleanView);
 check(clean.includes('gcf-bar') && !clean.includes('gcf-card'), 'clean renders the slim bar, not the card');
 check(clean.includes('status.clean'), 'clean renders its status label');
