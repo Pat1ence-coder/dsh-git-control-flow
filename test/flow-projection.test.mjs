@@ -64,10 +64,10 @@ test('the projection exposes the registered key, version and a cached card view'
   assert.equal(projection.stateVersion, GIT_FLOW_STATE_VERSION);
 
   const state = projection.init({}, 0);
-  assert.deepEqual(state, { presence: 'unknown', status: null, revision: 0, updatedAt: null });
+  assert.deepEqual(state, { presence: 'unknown', status: null, revision: 0, updatedAt: null, pending: null });
 
   const view = projection.wire.view(state);
-  assert.deepEqual(view, { presence: 'unknown', revision: 0, updatedAt: null });
+  assert.deepEqual(view, { presence: 'unknown', revision: 0, updatedAt: null, pending: null });
   assert.equal(projection.wire.view(state), view, 'the view is cached per state object');
   assert.equal(projection.stateSchema.parse(state), state);
   assert.equal(projection.wire.viewSchema.parse(view), view);
@@ -116,6 +116,48 @@ test('a not-a-repository result clears the card', () => {
   assert.equal(projection.apply(cleared, resultEvent({ kind: 'not-a-repository' }, 7000)), cleared);
 });
 
+test('the approval audit pair drives the pending write shown by the card', () => {
+  const projection = createGitFlowProjection();
+  const initial = projection.init({}, 0);
+
+  const asked = projection.apply(initial, {
+    type: 'approval/asked',
+    time: 10,
+    data: { id: 'a1', toolName: 'git_flow', reason: 'Stage 1 path(s) in test: a.ts' },
+  });
+  assert.deepEqual(asked.pending, {
+    phase: 'awaiting-approval',
+    action: 'stage',
+    reason: 'Stage 1 path(s) in test: a.ts',
+  });
+
+  const allowed = projection.apply(asked, {
+    type: 'approval/decided',
+    time: 11,
+    data: { id: 'a1', outcome: 'allowed-once' },
+  });
+  assert.equal(allowed.pending.phase, 'running');
+
+  // Another tool's approval is ignored.
+  assert.equal(
+    projection.apply(initial, { type: 'approval/asked', data: { id: 'x', toolName: 'bash' } }),
+    initial,
+  );
+
+  // A rejection clears it without running anything.
+  const rejected = projection.apply(asked, {
+    type: 'approval/decided',
+    time: 12,
+    data: { id: 'a1', outcome: 'rejected' },
+  });
+  assert.equal(rejected.pending, null);
+
+  // The tool result that follows settles the pending state.
+  const settled = projection.apply(allowed, resultEvent(snapshot({ staged: { count: 1, files: [] } }), 13));
+  assert.equal(settled.pending, null);
+  assert.equal(settled.presence, 'repo');
+});
+
 test('the wire view survives a JSON round trip whole', () => {
   const projection = createGitFlowProjection();
   const state = projection.apply(projection.init({}, 0), resultEvent(snapshot({ clean: false })));
@@ -133,12 +175,16 @@ test('the schema rejects malformed state', () => {
   assert.throws(() => schema.parse({ ...good, revision: -1 }), /revision/);
   assert.throws(() => schema.parse({ ...good, status: snapshot() }), /presence must be "repo"/);
   assert.throws(
-    () => schema.parse({ presence: 'repo', status: null, revision: 0, updatedAt: null }),
+    () => schema.parse({ presence: 'repo', status: null, revision: 0, updatedAt: null, pending: null }),
     /presence must be "unknown" or "absent"/,
   );
   assert.throws(
-    () => schema.parse({ presence: 'repo', status: snapshot({ counts: { staged: -1 } }), revision: 1, updatedAt: 1 }),
+    () => schema.parse({ presence: 'repo', status: snapshot({ counts: { staged: -1 } }), revision: 1, updatedAt: 1, pending: null }),
     /counts\.staged/,
+  );
+  assert.throws(
+    () => schema.parse({ ...good, pending: { phase: 'pushing', action: null, reason: null } }),
+    /pending\.phase/,
   );
 
   const bad = schema.safeParse({ ...good, presence: 'weird' });

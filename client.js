@@ -82,6 +82,40 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** Header shared by the card and by the "clean but a write is pending" shell. */
+    function CardHeader({ view, t, collapsed, onToggle, scrambleStatus }) {
+      const status = statusText(view, t);
+      return h(
+        'header',
+        { className: 'gcf-head' },
+        h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+        h('span', { className: 'gcf-title', title: branchText(view, t) }, branchText(view, t)),
+        h(Tracking, { view, t }),
+        h(
+          'span',
+          { className: 'gcf-status' },
+          h('i', null),
+          scrambleStatus === true ? h(Scramble, { text: status }) : status,
+        ),
+        h(Toggle, { collapsed, onToggle, t }),
+      );
+    }
+
+    /** In-flight write: waiting for the approval dialog, or running after it was allowed. */
+    function PendingLine({ pending, t }) {
+      if (pending === null || pending === undefined) return null;
+      const label = pending.phase === 'awaiting-approval' ? t('pending.awaiting') : t('pending.running');
+      return h(
+        'div',
+        { className: `gcf-pending is-${pending.phase}`, 'data-gcf': 'pending' },
+        h('span', { className: 'gcf-spinner', 'aria-hidden': true }),
+        h('span', { className: 'gcf-pending-label' }, label),
+        typeof pending.reason === 'string' && pending.reason !== ''
+          ? h('span', { className: 'gcf-pending-reason', title: pending.reason }, pending.reason)
+          : null,
+      );
+    }
+
     const CSS = `
 .gcf-dock {
   /* Node palette: git-control-dev @ origin/feat/thread-ui-replica, media/thread.css.
@@ -190,6 +224,37 @@ window.__ModuleLoader__.load({
 }
 .gcf-card.is-conflict .gcf-status { color: var(--dsw-alias-state-error-primary, #c0394b); }
 .gcf-card.is-clean .gcf-status { color: var(--dsw-alias-state-success-primary, #2e8f55); }
+.gcf-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 14px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-warn-primary, #d89614);
+}
+.gcf-pending.is-running { color: var(--dsw-alias-label-secondary, #5f5f5f); }
+.gcf-pending-label { flex: none; font-weight: 500; }
+.gcf-pending-reason {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.gcf-spinner {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: gcf-spin 800ms linear infinite;
+}
+@keyframes gcf-spin {
+  to { transform: rotate(360deg); }
+}
 .gcf-rows {
   max-height: 38vh;
   overflow-y: auto;
@@ -401,6 +466,7 @@ body[data-ds-dark-theme] .gcf-dock {
   .gcf-row, .gcf-num { animation: none; }
   .gcf-status, .gcf-status i { transition: none; }
   .gcf-toggle svg { transition: none; }
+  .gcf-spinner { animation: none; }
 }
 .gcf-label {
   flex: none;
@@ -437,6 +503,8 @@ body[data-ds-dark-theme] .gcf-dock {
       'action.pending': '写操作由 AI 在对话中执行，需你审批',
       'action.expand': '展开',
       'action.collapse': '收起',
+      'pending.awaiting': '等待审批',
+      'pending.running': '执行中',
       'time.now': '刚刚',
       'time.minutes': '{n} 分钟前',
       'time.hours': '{n} 小时前',
@@ -468,6 +536,8 @@ body[data-ds-dark-theme] .gcf-dock {
       'action.pending': 'The AI performs writes in the conversation, with your approval',
       'action.expand': 'Expand',
       'action.collapse': 'Collapse',
+      'pending.awaiting': 'Waiting for approval',
+      'pending.running': 'Running',
       'time.now': 'just now',
       'time.minutes': '{n}m ago',
       'time.hours': '{n}h ago',
@@ -647,7 +717,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function RepositoryList({ repositories, t, collapsed = false, onToggle }) {
+    function RepositoryList({ repositories, t, collapsed = false, onToggle, pending }) {
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
@@ -662,6 +732,7 @@ body[data-ds-dark-theme] .gcf-dock {
             h('span', { className: 'gcf-title' }, format(t, 'repos.title', { n: repositories.length })),
             h(Toggle, { collapsed, onToggle, t }),
           ),
+          h(PendingLine, { pending, t }),
           h(
             'div',
             {
@@ -704,11 +775,31 @@ body[data-ds-dark-theme] .gcf-dock {
     function GitFlowView({ view, t, now, collapsed = false, onToggle }) {
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') {
-        return Array.isArray(view.repositories) && view.repositories.length > 0
-          ? h(RepositoryList, { repositories: view.repositories, t, collapsed, onToggle })
-          : null;
+        if (Array.isArray(view.repositories) && view.repositories.length > 0) {
+          return h(RepositoryList, { repositories: view.repositories, t, collapsed, onToggle, pending: view.pending });
+        }
+        if (view.pending !== null && view.pending !== undefined) {
+          return h(
+            'div',
+            { className: 'gcf-dock', 'data-gcf': 'dock' },
+            h(
+              'section',
+              { className: 'gcf-card', 'data-gcf': 'card', 'data-phase': 'pending', 'aria-label': t('app.title') },
+              h(
+                'header',
+                { className: 'gcf-head' },
+                h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+                h('span', { className: 'gcf-title' }, t('app.title')),
+              ),
+              h(PendingLine, { pending: view.pending, t }),
+            ),
+          );
+        }
+        return null;
       }
-      if (view.phase === 'clean') return h(CleanBar, { view, t });
+      if (view.phase === 'clean' && (view.pending === null || view.pending === undefined)) {
+        return h(CleanBar, { view, t });
+      }
 
       const counts = [
         view.counts.staged > 0 ? format(t, 'foot.staged', { n: view.counts.staged }) : null,
@@ -728,15 +819,8 @@ body[data-ds-dark-theme] .gcf-dock {
             'data-phase': view.phase,
             'aria-label': t('app.title'),
           },
-          h(
-            'header',
-            { className: 'gcf-head' },
-            h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
-            h('span', { className: 'gcf-title', title: branchText(view, t) }, branchText(view, t)),
-            h(Tracking, { view, t }),
-            h('span', { className: 'gcf-status' }, h('i', null), h(Scramble, { text: statusText(view, t) })),
-            h(Toggle, { collapsed, onToggle, t }),
-          ),
+          h(CardHeader, { view, t, collapsed, onToggle, scrambleStatus: true }),
+          h(PendingLine, { pending: view.pending, t }),
           h(
             'div',
             {

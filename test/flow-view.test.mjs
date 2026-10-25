@@ -119,12 +119,28 @@ test('a detached head keeps its oid and drops the branch name', () => {
 
 test('absent and unknown states yield minimal, distinct views', () => {
   const absent = buildGitFlowView(state(null, 7));
-  assert.deepEqual(absent, { presence: 'absent', revision: 7, updatedAt: 9000 });
+  assert.deepEqual(absent, { presence: 'absent', revision: 7, updatedAt: 9000, pending: null });
   assert.equal(validateGitFlowView(absent).ok, true);
 
   const unknown = buildGitFlowView({ presence: 'unknown', status: null, revision: 0, updatedAt: null });
-  assert.deepEqual(unknown, { presence: 'unknown', revision: 0, updatedAt: null });
+  assert.deepEqual(unknown, { presence: 'unknown', revision: 0, updatedAt: null, pending: null });
   assert.equal(validateGitFlowView(unknown).ok, true);
+});
+
+test('a pending write is carried through the view even before any read', () => {
+  const pending = { phase: 'awaiting-approval', action: 'commit', reason: 'Commit 1 staged file(s) on main.' };
+  const view = buildGitFlowView({ presence: 'unknown', status: null, revision: 0, updatedAt: null, pending });
+  assert.deepEqual(view.pending, pending);
+  assert.equal(validateGitFlowView(view).ok, true);
+
+  const invalid = buildGitFlowView({
+    presence: 'unknown',
+    status: null,
+    revision: 0,
+    updatedAt: null,
+    pending: { phase: 'nope', action: null, reason: null },
+  });
+  assert.equal(validateGitFlowView(invalid).ok, false);
 });
 
 test('the view validator accepts real views and rejects malformed ones', () => {

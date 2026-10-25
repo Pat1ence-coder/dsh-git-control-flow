@@ -300,6 +300,32 @@ check(reposCollapsed.includes('"className":"gcf-body"'), 'the repository list co
 check(reposCollapsed.includes('gcf-toggle'), 'the repository list has a toggle');
 check(reposCollapsed.includes('alpha'), 'collapsed repository rows stay in the DOM for the height transition');
 
+const pendingWrite = {
+  phase: 'awaiting-approval',
+  action: 'stage',
+  reason: 'Stage 1 path(s) in test: scratch-dirty.md',
+};
+
+const dirtyPending = render({ ...dirtyView, pending: pendingWrite });
+check(dirtyPending.includes('gcf-pending'), 'a pending write renders inside the card');
+check(dirtyPending.includes('pending.awaiting'), 'a pending write is labelled as awaiting approval');
+check(dirtyPending.includes('Stage 1 path'), 'the approval reason is shown in the card');
+check(dirtyPending.includes('gcf-spinner'), 'a pending write shows a spinner');
+
+const cleanPending = render({ ...cleanView, pending: pendingWrite });
+check(cleanPending.includes('gcf-card'), 'a clean repository keeps the card while a write is pending');
+check(cleanPending.includes('gcf-pending'), 'the clean card shows the pending write');
+
+const unknownPending = render({ presence: 'unknown', revision: 0, updatedAt: null, pending: pendingWrite });
+check(unknownPending.includes('gcf-pending'), 'a pending write renders even before the first read');
+check(unknownPending.includes('app.title'), 'the pre-read card still has a title');
+
+const runningPending = render({
+  ...dirtyView,
+  pending: { phase: 'running', action: 'commit', reason: 'Commit 1 staged file(s) on main.' },
+});
+check(runningPending.includes('pending.running'), 'a running write is labelled as running');
+
 if (failures.length > 0) {
   console.error('FAIL');
   for (const failure of failures) console.error(' -', failure);
