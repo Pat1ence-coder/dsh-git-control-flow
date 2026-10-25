@@ -149,6 +149,27 @@ window.__ModuleLoader__.load({
     function PendingOverlay({ t, view }) {
       const stored = usePendingState();
       const [polled, setPolled] = React.useState(null);
+      const [bottom, setBottom] = React.useState(96);
+
+      // Anchor the floating card where the dock used to sit: directly above the
+      // composer seat, whose height changes while the approval panel is open.
+      React.useEffect(() => {
+        if (typeof document === 'undefined') return () => {};
+        const seat = document.querySelector('[data-composer-seat]');
+        if (seat === null) return () => {};
+        const measure = () => {
+          const height = Math.round(seat.getBoundingClientRect().height);
+          if (Number.isFinite(height) && height > 0) setBottom(height + 8);
+        };
+        measure();
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+        observer?.observe(seat);
+        window.addEventListener('resize', measure);
+        return () => {
+          observer?.disconnect();
+          window.removeEventListener('resize', measure);
+        };
+      }, []);
 
       // Robust path: the dock may be unmounted before it ever saw the pending
       // state, so the overlay asks the status route directly (the Host merges
@@ -192,7 +213,7 @@ window.__ModuleLoader__.load({
       if (pending === null || pending === undefined) return null;
       return h(
         'div',
-        { className: 'gcf-overlay', 'data-gcf': 'overlay' },
+        { className: 'gcf-overlay', 'data-gcf': 'overlay', style: { bottom: `${bottom}px` } },
         h(
           'div',
           { className: 'gcf-overlay-card', 'data-phase': pending.phase },
@@ -518,13 +539,17 @@ window.__ModuleLoader__.load({
 }
 .gcf-overlay {
   position: fixed;
-  top: 72px;
-  right: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 96px;
   z-index: 60;
-  width: min(320px, calc(100vw - 40px));
+  width: min(var(--dsh-composer-card-max-width, 760px), calc(100vw - 32px));
+  display: flex;
+  justify-content: center;
   pointer-events: none;
 }
 .gcf-overlay-card {
+  width: 100%;
   pointer-events: auto;
   box-sizing: border-box;
   border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
