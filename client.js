@@ -22,6 +22,13 @@ window.__ModuleLoader__.load({
     const NS = 'gitControlFlow';
     const STYLE_ID = 'gcf-styles';
     const PROJECTION_KEY = 'gitFlow';
+    const STATUS_ROUTE = 'api/git-flow.status';
+    const POLL_MS = 6000;
+
+    /** Same-origin URL for the Host status route; the session id is the only input. */
+    function statusUrl(sessionId) {
+      return new URL(`${STATUS_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`, document.baseURI).toString();
+    }
 
     const CSS = `
 .gcf-dock {
@@ -233,7 +240,6 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'app.title': 'Git 工作流',
-      'state.noRepo': '当前目录不是 Git 仓库',
       'branch.detached': '游离 HEAD @ {oid}',
       'branch.unknown': '未知分支',
       'branch.tracking': '{upstream} +{ahead} −{behind}',
@@ -260,7 +266,6 @@ window.__ModuleLoader__.load({
 
     const en = {
       'app.title': 'Git workflow',
-      'state.noRepo': 'Current directory is not a Git repository',
       'branch.detached': 'detached HEAD @ {oid}',
       'branch.unknown': 'unknown branch',
       'branch.tracking': '{upstream} +{ahead} −{behind}',
@@ -368,20 +373,6 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function EmptyBar({ t }) {
-      return h(
-        'div',
-        { className: 'gcf-dock', 'data-gcf': 'dock' },
-        h(
-          'div',
-          { className: 'gcf-bar', 'data-gcf': 'bar', 'data-phase': 'absent' },
-          h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
-          h('span', { className: 'gcf-label' }, t('app.title')),
-          h('span', { className: 'gcf-hint' }, t('state.noRepo')),
-        ),
-      );
-    }
-
     function CleanBar({ view, t }) {
       const tracking =
         view.branch.upstream === null
@@ -407,7 +398,7 @@ window.__ModuleLoader__.load({
 
     function GitFlowView({ view, t, now }) {
       if (view === undefined || view === null) return null;
-      if (view.presence !== 'repo') return h(EmptyBar, { t });
+      if (view.presence !== 'repo') return null;
       if (view.phase === 'clean') return h(CleanBar, { view, t });
 
       const tracking =
@@ -478,7 +469,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function GitFlowDock({ projection, t }) {
+    function GitFlowDock({ projection, sessionId, t }) {
       const subscribe = React.useCallback(
         (notify) => (projection === null || projection === undefined ? () => {} : projection.subscribe(notify)),
         [projection],
@@ -487,7 +478,47 @@ window.__ModuleLoader__.load({
         () => (projection === null || projection === undefined ? undefined : projection.getSnapshot()),
         [projection],
       );
-      const view = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+      const projected = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+      // Live status: the card reflects the repository now, not only after a
+      // tool call. The projection stays as the fallback (and as the audit
+      // trail of what the model saw).
+      const [live, setLive] = React.useState(null);
+      React.useEffect(() => {
+        if (typeof document === 'undefined' || typeof fetch !== 'function') return () => {};
+        let cancelled = false;
+        setLive(null);
+
+        const load = async () => {
+          if (typeof document !== 'undefined' && document.hidden === true) return;
+          try {
+            const response = await fetch(statusUrl(sessionId), {
+              headers: { accept: 'application/json' },
+              cache: 'no-store',
+            });
+            if (!response.ok) {
+              console.warn('git-control-flow: status route returned', response.status);
+              return;
+            }
+            const payload = await response.json();
+            if (!cancelled) setLive(payload);
+          } catch {
+            /* keep the last known value */
+          }
+        };
+
+        load();
+        const timer = setInterval(load, POLL_MS);
+        const onFocus = () => load();
+        window.addEventListener('focus', onFocus);
+        return () => {
+          cancelled = true;
+          clearInterval(timer);
+          window.removeEventListener('focus', onFocus);
+        };
+      }, [sessionId]);
+
+      const view = live ?? projected;
       return h(GitFlowView, { view, t, now: Date.now() });
     }
 
@@ -521,6 +552,7 @@ window.__ModuleLoader__.load({
               inject: (sessionId) => {
                 const binding = ctx.sessions.binding(sessionId);
                 return {
+                  sessionId,
                   projection:
                     binding === undefined
                       ? null

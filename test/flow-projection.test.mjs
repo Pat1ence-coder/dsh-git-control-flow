@@ -64,10 +64,10 @@ test('the projection exposes the registered key, version and a cached card view'
   assert.equal(projection.stateVersion, GIT_FLOW_STATE_VERSION);
 
   const state = projection.init({}, 0);
-  assert.deepEqual(state, { presence: 'absent', status: null, revision: 0, updatedAt: null });
+  assert.deepEqual(state, { presence: 'unknown', status: null, revision: 0, updatedAt: null });
 
   const view = projection.wire.view(state);
-  assert.deepEqual(view, { presence: 'absent', revision: 0, updatedAt: null });
+  assert.deepEqual(view, { presence: 'unknown', revision: 0, updatedAt: null });
   assert.equal(projection.wire.view(state), view, 'the view is cached per state object');
   assert.equal(projection.stateSchema.parse(state), state);
   assert.equal(projection.wire.viewSchema.parse(view), view);
@@ -134,7 +134,7 @@ test('the schema rejects malformed state', () => {
   assert.throws(() => schema.parse({ ...good, status: snapshot() }), /presence must be "repo"/);
   assert.throws(
     () => schema.parse({ presence: 'repo', status: null, revision: 0, updatedAt: null }),
-    /presence must be "absent"/,
+    /presence must be "unknown" or "absent"/,
   );
   assert.throws(
     () => schema.parse({ presence: 'repo', status: snapshot({ counts: { staged: -1 } }), revision: 1, updatedAt: 1 }),

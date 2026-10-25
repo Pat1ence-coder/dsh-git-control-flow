@@ -117,10 +117,14 @@ test('a detached head keeps its oid and drops the branch name', () => {
   assert.equal(view.branch.oid, 'b'.repeat(40));
 });
 
-test('an absent state yields a minimal view', () => {
-  const view = buildGitFlowView(state(null, 7));
-  assert.deepEqual(view, { presence: 'absent', revision: 7, updatedAt: 9000 });
-  assert.equal(validateGitFlowView(view).ok, true);
+test('absent and unknown states yield minimal, distinct views', () => {
+  const absent = buildGitFlowView(state(null, 7));
+  assert.deepEqual(absent, { presence: 'absent', revision: 7, updatedAt: 9000 });
+  assert.equal(validateGitFlowView(absent).ok, true);
+
+  const unknown = buildGitFlowView({ presence: 'unknown', status: null, revision: 0, updatedAt: null });
+  assert.deepEqual(unknown, { presence: 'unknown', revision: 0, updatedAt: null });
+  assert.equal(validateGitFlowView(unknown).ok, true);
 });
 
 test('the view validator accepts real views and rejects malformed ones', () => {

@@ -29,7 +29,7 @@ function snapshot(overrides = {}) {
 }
 
 /** Minimal Cordis-like context that records what the plugin registers. */
-function harness({ readStatus } = {}) {
+function harness({ readStatus, agents, connection } = {}) {
   const captured = {};
   const effects = [];
   const calls = [];
@@ -53,12 +53,24 @@ function harness({ readStatus } = {}) {
         return () => {};
       },
     },
+    agents: agents ?? { get: () => undefined },
     effect(callback, label) {
       effects.push(label);
       callback();
       return () => {};
     },
   };
+
+  if (connection !== undefined) {
+    ctx.connection = {
+      fetch: {
+        register(spec) {
+          captured.route = spec;
+          return () => {};
+        },
+      },
+    };
+  }
 
   const deps = {
     defineTool: (options) => options,
@@ -76,9 +88,10 @@ function harness({ readStatus } = {}) {
 
 test('registers the projection, the tool and the command as effects', () => {
   const { captured, effects } = harness();
-  assert.equal(effects.length, 3);
+  assert.equal(effects.length, 4);
   assert.deepEqual(effects, [
     'git-control-flow: projection',
+    'git-control-flow: status route',
     'git-control-flow: git_flow tool',
     'git-control-flow: /git-flow command',
   ]);
@@ -172,4 +185,67 @@ test('the command renders status and reports failures as command errors', async 
   });
   assert.equal(failed.kind, 'error');
   assert.equal(failed.text, 'git exploded');
+});
+
+test('the status route serves the card model for a known session', async () => {
+  const read = [];
+  const session = { session: { cwd: '/sessions/repo' } };
+  const { captured } = harness({
+    readStatus: async (directory, options) => {
+      read.push({ directory, signal: options?.signal });
+      return snapshot({ root: directory });
+    },
+    agents: { get: (id) => (id === 'session-1' ? session : undefined) },
+    connection: {},
+  });
+
+  assert.equal(captured.route.path, '/api/git-flow.status');
+  assert.deepEqual(captured.route.methods, ['GET']);
+
+  const response = await captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=session-1'),
+  );
+  assert.equal(response.status, 200);
+  const view = await response.json();
+  assert.equal(view.presence, 'repo');
+  assert.equal(view.branch.name, 'main');
+  assert.equal(read.length, 1);
+  assert.equal(read[0].directory, '/sessions/repo');
+});
+
+test('the status route rejects a missing or unknown session', async () => {
+  const { captured } = harness({ connection: {}, agents: { get: () => undefined } });
+
+  const missing = await captured.route.fetch(new Request('http://local/api/git-flow.status'));
+  assert.equal(missing.status, 400);
+
+  const unknown = await captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=nope'),
+  );
+  assert.equal(unknown.status, 404);
+});
+
+test('the status route reports a non-repository and a failed read', async () => {
+  const absent = harness({
+    readStatus: async () => null,
+    agents: { get: () => ({ session: { cwd: '/plain' } }) },
+    connection: {},
+  });
+  const absentResponse = await absent.captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=s'),
+  );
+  assert.equal((await absentResponse.json()).presence, 'absent');
+
+  const failing = harness({
+    readStatus: async () => {
+      throw new Error('git exploded');
+    },
+    agents: { get: () => ({ session: { cwd: '/repo' } }) },
+    connection: {},
+  });
+  const failingResponse = await failing.captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=s'),
+  );
+  assert.equal(failingResponse.status, 500);
+  assert.match((await failingResponse.json()).error, /git exploded/);
 });

@@ -16,7 +16,7 @@ import { registerGitFlow } from './lib/flow/register.mjs';
 
 export const name = 'git-control-flow';
 
-export const inject = ['commands', 'sessionProjections', 'tools', 'workingDirectory'];
+export const inject = ['agents', 'commands', 'sessionProjections', 'tools', 'workingDirectory'];
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx

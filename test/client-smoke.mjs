@@ -134,12 +134,12 @@ check(entry?.Component === plugin.components.GitFlowDock, 'the dock component mu
 
 const props = entry?.options?.inject?.('session-test');
 check(props?.projection === null, 'a missing session binding injects a null projection');
-check('sessionId' in (props ?? {}) === false, 'session id is not forwarded to the component');
+check(props?.sessionId === 'session-test', 'the session id is forwarded for the status route');
 
 check(locales.length === 1 && locales[0].ns === 'gitControlFlow', 'one locale namespace registration');
 check(!!locales[0]?.dicts?.zh && !!locales[0]?.dicts?.en, 'both zh and en dictionaries must exist');
 const requiredKeys = [
-  'app.title', 'state.noRepo', 'status.clean', 'status.changes', 'status.conflicts',
+  'app.title', 'status.clean', 'status.changes', 'status.conflicts',
   'row.working', 'row.files', 'action.commit', 'time.now',
 ];
 for (const key of requiredKeys) {
@@ -196,9 +196,8 @@ function render(view) {
 
 check(render(null) === 'null', 'no projection renders nothing');
 
-const absent = render({ presence: 'absent', revision: 0, updatedAt: null });
-check(absent.includes('gcf-bar'), 'absent renders the slim bar');
-check(absent.includes('state.noRepo'), 'absent renders the no-repository text');
+check(render({ presence: 'unknown', revision: 0, updatedAt: null }) === 'null', 'unknown renders nothing');
+check(render({ presence: 'absent', revision: 0, updatedAt: null }) === 'null', 'absent renders nothing');
 
 const clean = render(cleanView);
 check(clean.includes('gcf-bar') && !clean.includes('gcf-card'), 'clean renders the slim bar, not the card');
