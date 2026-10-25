@@ -1,19 +1,17 @@
 /**
  * Contract smoke test for `client.js` — no browser, no Host, no install.
  *
- * It loads the Client module the way the browser module table would, then
- * drives `apply` with a minimal context and asserts the registrations the
- * plugin must make:
- *   1. the `conversation.input.dock` entry with the documented id/order/locale;
+ * It loads the Client module the way the browser module table would, drives
+ * `apply` with a minimal context, and asserts:
+ *   1. the `conversation.input.dock` entry with its id/order/locale;
  *   2. the locale dictionaries for `zh` and `en`;
  *   3. one injected stylesheet;
- *   4. a component that renders without throwing and carries the visible parts.
+ *   4. the pure card component renders every phase from the Host model.
  *
  * Run: node test/client-smoke.mjs
  */
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientPath = path.join(here, '..', 'client.js');
@@ -53,7 +51,15 @@ globalThis.window = {
 
 const reactStub = {
   createElement(type, props, ...children) {
+    // Function components are expanded eagerly so the assertions see the tree.
+    if (typeof type === 'function') return type({ ...(props ?? {}), children });
     return { type, props: props ?? {}, children };
+  },
+  useCallback(fn) {
+    return fn;
+  },
+  useSyncExternalStore(_subscribe, getSnapshot) {
+    return getSnapshot();
   },
 };
 
@@ -75,7 +81,10 @@ const plugin = definition.factory((name) => {
 check(Array.isArray(plugin.inject), 'plugin.inject must be an array');
 check(plugin.inject?.includes('slots'), 'plugin.inject must declare slots');
 check(plugin.inject?.includes('locale'), 'plugin.inject must declare locale');
+check(plugin.inject?.includes('sessions'), 'plugin.inject must declare sessions');
 check(typeof plugin.apply === 'function', 'plugin.apply must be a function');
+check(typeof plugin.components?.GitFlowView === 'function', 'plugin must expose GitFlowView');
+check(typeof plugin.components?.GitFlowDock === 'function', 'plugin must expose GitFlowDock');
 
 const registered = [];
 const effects = [];
@@ -91,6 +100,11 @@ const ctx = {
     register(ns, dicts) {
       locales.push({ ns, dicts });
       return () => {};
+    },
+  },
+  sessions: {
+    binding() {
+      return undefined;
     },
   },
   slots: {
@@ -116,32 +130,100 @@ check(entry?.options?.id === 'git-control-flow', `slot id is ${entry?.options?.i
 check(entry?.options?.order === 10, `slot order is ${entry?.options?.order}`);
 check(entry?.options?.locale === 'gitControlFlow', `slot locale is ${entry?.options?.locale}`);
 check(typeof entry?.options?.inject === 'function', 'slot registration must inject props');
-check(typeof entry?.Component === 'function', 'slot registration must provide a component');
+check(entry?.Component === plugin.components.GitFlowDock, 'the dock component must be registered');
 
 const props = entry?.options?.inject?.('session-test');
-check(props?.sessionId === 'session-test', 'injected props must carry the session id');
+check(props?.projection === null, 'a missing session binding injects a null projection');
+check('sessionId' in (props ?? {}) === false, 'session id is not forwarded to the component');
 
 check(locales.length === 1 && locales[0].ns === 'gitControlFlow', 'one locale namespace registration');
 check(!!locales[0]?.dicts?.zh && !!locales[0]?.dicts?.en, 'both zh and en dictionaries must exist');
-for (const key of ['strip.label', 'strip.createPr', 'strip.createPrPending']) {
+const requiredKeys = [
+  'app.title', 'state.noRepo', 'status.clean', 'status.changes', 'status.conflicts',
+  'row.working', 'row.files', 'action.commit', 'time.now',
+];
+for (const key of requiredKeys) {
   check(!!locales[0]?.dicts?.zh?.[key], `zh dictionary missing ${key}`);
   check(!!locales[0]?.dicts?.en?.[key], `en dictionary missing ${key}`);
 }
 
 check(effects.length >= 2, `expected locale + style effects, got ${effects.length}`);
 check(appended.length === 1 && appended[0].id === 'gcf-styles', 'one stylesheet must be appended');
-check(/\.gcf-bar/.test(appended[0]?.textContent ?? ''), 'stylesheet must style .gcf-bar');
+check(/\.gcf-card/.test(appended[0]?.textContent ?? ''), 'stylesheet must style .gcf-card');
 
-const tree = entry?.Component({ t: (key) => key });
-const flat = JSON.stringify(tree);
-check(flat.includes('gcf-bar'), 'component must render .gcf-bar');
-check(flat.includes('gcf-action'), 'component must render the primary action');
-check(flat.includes('创建 PR') === false, 'component text must come from t(), not literals');
-check(flat.includes('strip.createPr'), 'component must request the Create PR label from t()');
+const { GitFlowView } = plugin.components;
+const t = (key) => key;
+const now = 1_700_000_000_000;
+
+const cleanView = {
+  presence: 'repo',
+  revision: 1,
+  updatedAt: 1,
+  branch: { name: 'feat/x', detached: false, oid: 'a'.repeat(40), upstream: 'origin/feat/x', ahead: 1, behind: 0 },
+  phase: 'clean',
+  operation: null,
+  clean: true,
+  counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 0, working: 0 },
+  diffStat: { add: 0, del: 0 },
+  rows: [],
+  hiddenCommits: 0,
+  truncatedFiles: false,
+};
+
+const dirtyView = {
+  ...cleanView,
+  phase: 'changes',
+  clean: false,
+  counts: { staged: 1, unstaged: 1, untracked: 0, conflicts: 0, working: 2 },
+  diffStat: { add: 12, del: 3 },
+  rows: [
+    { kind: 'working', id: 'working', files: 2 },
+    { kind: 'commit', id: 'abc1234', subject: 'fix: something', author: 'You', time: Math.floor(now / 1000) - 120 },
+  ],
+  hiddenCommits: 3,
+};
+
+const conflictView = {
+  ...dirtyView,
+  phase: 'conflicts',
+  operation: 'merge',
+  counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 2, working: 2 },
+};
+
+function render(view) {
+  return JSON.stringify(GitFlowView({ view, t, now }));
+}
+
+check(render(null) === 'null', 'no projection renders nothing');
+
+const absent = render({ presence: 'absent', revision: 0, updatedAt: null });
+check(absent.includes('gcf-bar'), 'absent renders the slim bar');
+check(absent.includes('state.noRepo'), 'absent renders the no-repository text');
+
+const clean = render(cleanView);
+check(clean.includes('gcf-bar') && !clean.includes('gcf-card'), 'clean renders the slim bar, not the card');
+check(clean.includes('status.clean'), 'clean renders its status label');
+check(clean.includes('feat/x'), 'clean renders the branch name');
+
+const dirty = render(dirtyView);
+check(dirty.includes('gcf-card'), 'dirty renders the card');
+check(dirty.includes('gcf-rows'), 'dirty renders rows');
+check(dirty.includes('row.working'), 'dirty leads with the working row');
+check(dirty.includes('fix: something'), 'dirty renders commit subjects');
+check(dirty.includes('rows.more'), 'dirty reports hidden commits');
+check(dirty.includes('+12') && dirty.includes('−3'), 'dirty renders the diff stat');
+check(dirty.includes('foot.staged') && dirty.includes('foot.unstaged'), 'dirty renders bucket counts');
+check(dirty.includes('action.commit'), 'dirty renders the primary action');
+check(dirty.includes('"disabled":true'), 'the primary action is disabled');
+
+const conflict = render(conflictView);
+check(conflict.includes('"data-phase":"conflicts"'), 'conflicts set the phase attribute');
+check(conflict.includes('is-conflict'), 'conflicts set the conflict class');
+check(conflict.includes('status.conflicts'), 'conflicts render the conflict label');
 
 if (failures.length > 0) {
   console.error('FAIL');
   for (const failure of failures) console.error(' -', failure);
   process.exit(1);
 }
-console.log('PASS  client module contract: 1 dock entry, 2 dictionaries, 1 stylesheet, component renders');
+console.log('PASS  client module: 1 dock entry, 2 dictionaries, 1 stylesheet, 5 render phases');

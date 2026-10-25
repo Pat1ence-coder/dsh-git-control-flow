@@ -11,7 +11,7 @@ Generative Git workflow card for the DSH Web conversation: a strip that grows ou
 | 1 | Bundle skeleton + dock seat | written, install pending approval |
 | 2a | Git read layer: `runGit`, porcelain v2 / numstat / log parsers, status snapshot | done, 8 real-Git tests |
 | 2b | `git_flow` tool + `gitFlow` projection + `/git-flow` command | done, 15 offline tests |
-| 3 | Card rendering (graph lanes, rows, tags, chips) | pending |
+| 3 | Card rendering from the Host-computed view model | done, 30 tests; visual pending install |
 | 4 | Motion (grow, stagger, scramble, progress, fold) | pending |
 | 5 | Mutations (stage / commit / merge / resolve) + approval | pending |
 | 6 | Checks mapping, conflict popover, push (opt-in) | pending |
@@ -32,6 +32,7 @@ lib/flow/schema.mjs    ZodType-compatible subset (parse/safeParse), zero deps
 lib/flow/projection.mjs session projection definition + identity wire view
 lib/flow/register.mjs   registration body, injectable for offline tests
 lib/flow/render.mjs     snapshot → compact text (model result, command)
+lib/flow/view.mjs       Host-computed card model (phases, rows, validation)
 locale/{en,zh}.json Plugin Manager display metadata
 icon.svg            original artwork
 test/               real-Git status tests, projection/register tests, client smoke test
@@ -59,5 +60,5 @@ Target: the `web` DSH profile, as a local bundle whose patch inserts the `git-co
 
 ```bash
 npm run check   # node --check across both halves, the git layer and the flow layer
-npm test        # 23 tests: real-Git status, projection/register wiring, client contract
+npm test        # 30 tests: real-Git status, view model, projection/register wiring, client contract
 ```

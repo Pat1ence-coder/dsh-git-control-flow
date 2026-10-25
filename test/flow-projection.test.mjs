@@ -58,16 +58,19 @@ test('contract names stay aligned', () => {
   assert.deepEqual(GIT_FLOW_ACTIONS, ['status']);
 });
 
-test('the projection exposes the registered key, version and identity view', () => {
+test('the projection exposes the registered key, version and a cached card view', () => {
   const projection = createGitFlowProjection();
   assert.equal(projection.key, 'gitFlow');
   assert.equal(projection.stateVersion, GIT_FLOW_STATE_VERSION);
 
   const state = projection.init({}, 0);
   assert.deepEqual(state, { presence: 'absent', status: null, revision: 0, updatedAt: null });
-  assert.equal(projection.wire.view(state), state);
+
+  const view = projection.wire.view(state);
+  assert.deepEqual(view, { presence: 'absent', revision: 0, updatedAt: null });
+  assert.equal(projection.wire.view(state), view, 'the view is cached per state object');
   assert.equal(projection.stateSchema.parse(state), state);
-  assert.equal(projection.wire.viewSchema.parse(state), state);
+  assert.equal(projection.wire.viewSchema.parse(view), view);
 });
 
 test('an unrelated event keeps the same state reference', () => {
