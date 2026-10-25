@@ -263,7 +263,6 @@ check(clean.includes('status.clean'), 'clean renders its status label');
 check(clean.includes('feat/x'), 'clean renders the branch name');
 check(clean.includes('gcf-ahead') && clean.includes('↑1'), 'clean shows the ahead count as an arrow');
 check(!clean.includes('gcf-behind'), 'a zero behind count is not rendered');
-
 const behindView = {
   ...cleanView,
   branch: { ...cleanView.branch, ahead: 0, behind: 3 },
@@ -278,7 +277,7 @@ check(dirty.includes('gcf-rows'), 'dirty renders rows');
 check(dirty.includes('row.working'), 'dirty leads with the working row');
 check(dirty.includes('fix: something'), 'dirty renders commit subjects');
 check(dirty.includes('gcf-rail'), 'commit rows draw the graph rail');
-check(dirty.includes('gcf-pill'), 'commit rows render branch pills');
+check(dirty.includes('gcf-pill'), 'commit rows render branch pills in the meta area');
 check(dirty.includes('rows.more'), 'dirty reports hidden commits');
 check(dirty.includes('+12') && dirty.includes('−3'), 'dirty renders the diff stat');
 check(dirty.includes('status.changes'), 'dirty renders its state in the footer');
@@ -320,16 +319,20 @@ check(expanded.includes('gcf-card'), 'an expanded card renders the card');
 check(expanded.includes('gcf-chips'), 'an expanded card keeps the chips row');
 check(expanded.includes('"aria-expanded":true'), 'the toggle reports the expanded state');
 check(expanded.includes('action.collapse'), 'the expanded toggle offers to collapse');
-check(expanded.includes('"className":"gcf-body is-open"'), 'an expanded card opens its body');
+check(expanded.includes('"gcf-body is-open"'), 'an expanded card opens its body');
 
 const collapsed = JSON.stringify(
   GitFlowView({ view: dirtyView, t, now, collapsed: true, onToggle: () => {} }),
 );
-check(!collapsed.includes('gcf-card'), 'a collapsed card renders no card');
+check(collapsed.includes('gcf-card'), 'a collapsed card keeps the card in the DOM for the transition');
 check(collapsed.includes('gcf-chips'), 'a collapsed card keeps the chips row');
 check(collapsed.includes('"aria-expanded":false'), 'the chips toggle reports the collapsed state');
 check(collapsed.includes('action.expand'), 'the chips toggle offers to expand');
 check(collapsed.includes('state.changes'), 'the chips still show the state');
+check(!collapsed.includes('"gcf-body is-open"'), 'a collapsed card closes its body');
+check(collapsed.includes('"aria-hidden":true'), 'a collapsed body is hidden from assistive technology');
+// When collapsed the first chip shows the branch name, not the state word.
+check(collapsed.includes('feat/x'), 'collapsed chip shows the branch name');
 
 const reposExpanded = JSON.stringify(
   GitFlowView({

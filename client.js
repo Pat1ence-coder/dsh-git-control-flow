@@ -293,19 +293,31 @@ window.__ModuleLoader__.load({
 .gcf-body {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: grid-template-rows 360ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .gcf-body.is-open { grid-template-rows: 1fr; }
-.gcf-body-inner { min-height: 0; overflow: hidden; }
-.gcf-body.is-open .gcf-body-inner { max-height: 42vh; overflow-y: auto; overscroll-behavior: contain; }
-.gcf-reveal {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+.gcf-body-inner {
+  min-height: 0;
+  overflow: hidden;
+  /* Fade content in/out so it doesn't flash as the container grows/shrinks. */
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms;
 }
-.gcf-reveal.is-open { grid-template-rows: 1fr; }
-.gcf-reveal-inner { min-height: 0; overflow: hidden; }
-.gcf-reveal.is-settled .gcf-reveal-inner { overflow: visible; }
+.gcf-body.is-open .gcf-body-inner {
+  max-height: 42vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  opacity: 1;
+  transition: opacity 220ms cubic-bezier(0.4, 0, 0.2, 1) 100ms;
+}
+.gcf-reveal { }
+.gcf-reveal-inner { overflow: hidden; }
+.gcf-reveal .gcf-card { animation: gcf-card-grow 450ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.gcf-reveal.is-entered .gcf-card { animation: none; }
+@keyframes gcf-card-grow {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
 .gcf-head {
   display: flex;
   align-items: center;
@@ -464,11 +476,16 @@ window.__ModuleLoader__.load({
   stroke-dashoffset: 0;
   animation: gcf-draw 700ms var(--ease, cubic-bezier(0.2, 0.8, 0.2, 1)) both 100ms;
 }
-.gcf-edge.t-ours { stroke: var(--blue-line, #c6d6f2); }
-.gcf-edge.t-other { stroke: var(--teal-line, #bde9dc); }
+.gcf-edge.t-ours { stroke: var(--blue-line, #93b4ee); }
+.gcf-edge.t-other { stroke: var(--teal-line, #5ecfb5); }
 .gcf-edge.t-merged { stroke: var(--merged-line, #cfbdf8); }
 .gcf-edge.t-warn { stroke: var(--warn-line, #ecc68a); }
 .gcf-edge.t-ok { stroke: var(--ok-line, #a8e0c0); }
+@keyframes gcf-draw {
+  /* Draw from bottom to top: -1 means the path is drawn in reverse. */
+  from { stroke-dashoffset: -1; }
+  to { stroke-dashoffset: 0; }
+}
 .gcf-node { --c: var(--base, #bdbdbd); }
 .gcf-node.t-ours { --c: var(--blue, #4a7fdc); }
 .gcf-node.t-other { --c: var(--teal, #22c4a0); }
@@ -476,10 +493,6 @@ window.__ModuleLoader__.load({
 .gcf-node.t-warn { --c: var(--warn, #e3a21a); }
 .gcf-node.t-ok { --c: var(--ok, #2fb46c); }
 .gcf-n-dot { fill: var(--c); }
-@keyframes gcf-draw {
-  from { stroke-dashoffset: 1; }
-  to { stroke-dashoffset: 0; }
-}
 .gcf-rail-wait {
   flex: none;
   overflow: visible;
@@ -878,8 +891,8 @@ body[data-ds-dark-theme] .gcf-dock {
 .gcf-dock {
   --ink: #1d1d1f; --ink-2: #3a3a3c; --muted: #7a7a7a; --faint: #a6a6a6;
   --hair: #ececec; --soft: #f5f5f5;
-  --blue: #4a7fdc; --blue-line: #c6d6f2; --blue-tag-bg: #eef4ff; --blue-tag: #3866c4;
-  --teal: #22c4a0; --teal-line: #bde9dc; --teal-tag-bg: #ecfaf5; --teal-tag: #16876c;
+  --blue: #4a7fdc; --blue-line: #93b4ee; --blue-tag-bg: #eef4ff; --blue-tag: #3866c4;
+  --teal: #22c4a0; --teal-line: #5ecfb5; --teal-tag-bg: #ecfaf5; --teal-tag: #16876c;
   --base: #bdbdbd; --base-line: #dedede;
   --warn: #e3a21a; --warn-ink: #b5682b; --warn-line: #ecc68a; --warn-bg: #fdf6e6;
   --ok: #2fb46c; --ok-ink: #2e8f55; --ok-line: #a8e0c0;
@@ -1168,24 +1181,18 @@ body[data-ds-dark-theme] .gcf-dock {
       return shown;
     }
 
-    /** Bottom-up reveal for a card that appears where the composer is (video 2.5s). */
+    /** Card entrance: fade + lift + scale (replica gg-card-grow, video 2.5s).
+     *  Wraps the card section so the animation fires exactly once on mount. */
     function Reveal({ children }) {
-      const [open, setOpen] = React.useState(false);
-      const [settled, setSettled] = React.useState(false);
+      const [entered, setEntered] = React.useState(false);
       React.useEffect(() => {
-        const raf = requestAnimationFrame(() => setOpen(true));
-        // Release the clipping once the growth is done so the card keeps its
-        // shadow and any later content growth is not cut off.
-        const timer = setTimeout(() => setSettled(true), 540);
-        return () => {
-          cancelAnimationFrame(raf);
-          clearTimeout(timer);
-        };
+        const raf = requestAnimationFrame(() => setEntered(true));
+        return () => cancelAnimationFrame(raf);
       }, []);
       return h(
         'div',
-        { className: `gcf-reveal${open ? ' is-open' : ''}${settled ? ' is-settled' : ''}` },
-        h('div', { className: 'gcf-reveal-inner' }, children),
+        { className: `gcf-reveal${entered ? ' is-entered' : ''}` },
+        children,
       );
     }
 
@@ -1462,7 +1469,21 @@ body[data-ds-dark-theme] .gcf-dock {
       for (const edge of edges) {
         const x1 = x(edge.fromLane);
         const x2 = x(edge.toLane);
-        const y1 = y(edge.from);
+        // For from=-1 (top continuation), start just below any non-commit row
+        // that sits above the first commit, so the line doesn't pierce its node.
+        let y1;
+        if (edge.from < 0) {
+          // Find any non-commit rows above the target.
+          let startRow = 0;
+          while (startRow < edge.to && rows[startRow] && rows[startRow].kind !== 'commit') {
+            startRow++;
+          }
+          // Start from just below the last non-commit node (r=5 + 2px gap),
+          // or from the top if there are no non-commit rows above.
+          y1 = startRow > 0 ? y(startRow - 1) + 8 : 0;
+        } else {
+          y1 = y(edge.from);
+        }
         const y2 = y(edge.to);
         const bend = Math.max(y1, y2 - ROW_HEIGHT);
         const mid = (bend + y2) / 2;
@@ -1482,30 +1503,35 @@ body[data-ds-dark-theme] .gcf-dock {
           if (row.kind === 'working' || row.kind === 'operation') {
             const cx = x(0), cy = y(index);
             if (row.kind === 'operation') {
-              // Merge/rebase in-progress: filled amber dot (matches video 8.6s)
-              nodeParts.push(h('circle', {
-                key: `n${row.id}`,
-                cx, cy, r: 6,
-                fill: row.operation === 'merge' ? 'var(--warn, #e3a21a)' : 'var(--base, #bdbdbd)',
-              }));
+              // Merge/rebase in-progress: filled amber dot with white halo
+              const fill = row.operation === 'merge' ? 'var(--warn, #e3a21a)' : 'var(--base, #bdbdbd)';
+              nodeParts.push(h('g', { key: `n${row.id}`, transform: `translate(${cx} ${cy})` },
+                h('circle', { r: 9, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
+                h('circle', { r: 6, fill }),
+              ));
             } else {
-              // Working changes: hollow dashed ring (video 3.0s)
-              nodeParts.push(h('circle', {
-                key: `n${row.id}`,
-                cx, cy, r: 5, fill: 'none',
-                stroke: 'var(--base-line, #dedede)',
-                strokeWidth: 1.5,
-                strokeDasharray: '3 3',
-              }));
+              // Working changes: hollow dashed ring with white background halo
+              nodeParts.push(h('g', { key: `n${row.id}`, transform: `translate(${cx} ${cy})` },
+                h('circle', { r: 7, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
+                h('circle', {
+                  r: 5, fill: 'none',
+                  stroke: 'var(--base-line, #dedede)',
+                  strokeWidth: 1.5,
+                  strokeDasharray: '3 3',
+                }),
+              ));
             }
           }
           return;
         }
         const lane = Number.isInteger(row.lane) ? row.lane : 0;
+        // White halo ring before the coloured dot so the line visually stops
+        // short of the node — matching the reference video gap.
         nodeParts.push(
           h(
             'g',
             { key: `n${row.id}`, className: `gcf-node t-${toneOfRow(row)}`, transform: `translate(${x(lane)} ${y(index)})` },
+            h('circle', { r: 6.5, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
             h('circle', { className: 'gcf-n-dot', r: 3.5 }),
           ),
         );
@@ -1592,6 +1618,10 @@ body[data-ds-dark-theme] .gcf-dock {
           'span',
           { className: 'gcf-subject' },
           scramble ? h(Scramble, { text: row.subject }) : row.subject,
+        ),
+        h(
+          'span',
+          { className: 'gcf-meta' },
           Array.isArray(row.refs) && row.refs.length > 0
             ? h(
                 'span',
@@ -1601,10 +1631,6 @@ body[data-ds-dark-theme] .gcf-dock {
                 ),
               )
             : null,
-        ),
-        h(
-          'span',
-          { className: 'gcf-meta' },
           h('code', null, row.id),
           h('span', null, row.author),
           h('span', null, relativeTime(row.time, now, t)),
@@ -1624,24 +1650,44 @@ body[data-ds-dark-theme] .gcf-dock {
 
     /** The always-present chips above the composer (video 0s / 8.6s). */
     function Chips({ view, t, onToggle, expanded }) {
-      const chips = [
+      const chips = [];
+      // When collapsed: show branch name + state colour as the primary chip.
+      // When expanded: show just the state word (branch is visible in the card header).
+      const branchName = view.branch?.detached
+        ? t('branch.detachedShort')
+        : (view.branch?.name ?? t('branch.unknown'));
+      chips.push(
         h(
           'span',
           { key: 'state', className: `gcf-chip is-${stateOf(view)}` },
           h('i', null),
-          stateText(view, t),
+          expanded ? stateText(view, t) : branchName,
         ),
-      ];
-      if (view.branch.upstream !== null) {
-        chips.push(
-          h(
-            'span',
-            { key: 'tracking', className: 'gcf-chip gcf-chip--tracking' },
-            h('span', { className: 'gcf-upstream' }, view.branch.upstream),
-            view.branch.ahead > 0 ? h('span', { className: 'gcf-ahead' }, `\u2191${view.branch.ahead}`) : null,
-            view.branch.behind > 0 ? h('span', { className: 'gcf-behind' }, `\u2193${view.branch.behind}`) : null,
-          ),
-        );
+      );
+      if (view.branch?.upstream !== null && view.branch?.upstream !== undefined) {
+        const { ahead, behind } = view.branch;
+        if (expanded) {
+          // Expanded: show upstream name + arrows in one chip.
+          chips.push(
+            h(
+              'span',
+              { key: 'tracking', className: 'gcf-chip gcf-chip--tracking' },
+              h('span', { className: 'gcf-upstream' }, view.branch.upstream),
+              ahead > 0 ? h('span', { className: 'gcf-ahead' }, `\u2191${ahead}`) : null,
+              behind > 0 ? h('span', { className: 'gcf-behind' }, `\u2193${behind}`) : null,
+            ),
+          );
+        } else if (ahead > 0 || behind > 0) {
+          // Collapsed: show only the numeric deltas.
+          chips.push(
+            h(
+              'span',
+              { key: 'tracking', className: 'gcf-chip gcf-chip--tracking' },
+              ahead > 0 ? h('span', { className: 'gcf-ahead' }, `\u2191${ahead}`) : null,
+              behind > 0 ? h('span', { className: 'gcf-behind' }, `\u2193${behind}`) : null,
+            ),
+          );
+        }
       }
       if (view.diffStat.add > 0 || view.diffStat.del > 0) {
         chips.push(
@@ -1681,52 +1727,52 @@ body[data-ds-dark-theme] .gcf-dock {
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
         h(Reveal, null,
-        h(
-          'section',
-          { className: 'gcf-card', 'data-gcf': 'repositories' },
           h(
-            'header',
-            { className: 'gcf-head' },
-            h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
-            h('span', { className: 'gcf-title' }, format(t, 'repos.title', { n: repositories.length })),
-            h(Toggle, { collapsed, onToggle, t }),
-          ),
-          h(PendingLine, { pending, t }),
-          h(
-            'div',
-            {
-              className: `gcf-body${collapsed ? '' : ' is-open'}`,
-              'data-gcf': 'body',
-              'aria-hidden': collapsed,
-            },
+            'section',
+            { className: 'gcf-card', 'data-gcf': 'repositories' },
+            h(
+              'header',
+              { className: 'gcf-head' },
+              h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+              h('span', { className: 'gcf-title' }, format(t, 'repos.title', { n: repositories.length })),
+              h(Toggle, { collapsed, onToggle, t }),
+            ),
+            h(PendingLine, { pending, t }),
             h(
               'div',
-              { className: 'gcf-body-inner' },
+              {
+                className: `gcf-body${collapsed ? '' : ' is-open'}`,
+                'data-gcf': 'body',
+                'aria-hidden': collapsed,
+              },
               h(
                 'div',
-                { className: 'gcf-rows' },
-                repositories.map((repo, index) =>
-                  h(
-                    'div',
-                    {
-                      key: repo.name,
-                      className: 'gcf-repo-row',
-                      'data-gcf': 'repo',
-                      style: { '--gcf-i': String(index) },
-                    },
-                    h('span', { className: 'gcf-repo-name' }, repo.name),
-                    h('span', { className: 'gcf-repo-branch' }, repo.detached ? t('branch.detachedShort') : repo.branch ?? t('branch.unknown')),
+                { className: 'gcf-body-inner' },
+                h(
+                  'div',
+                  { className: 'gcf-rows' },
+                  repositories.map((repo, index) =>
                     h(
-                      'span',
-                      { className: `gcf-repo-state${repo.clean ? '' : ' is-dirty'}` },
-                      repo.clean ? t('status.clean') : format(t, 'status.changes', { n: repo.changed }),
+                      'div',
+                      {
+                        key: repo.name,
+                        className: 'gcf-repo-row',
+                        'data-gcf': 'repo',
+                        style: { '--gcf-i': String(index) },
+                      },
+                      h('span', { className: 'gcf-repo-name' }, repo.name),
+                      h('span', { className: 'gcf-repo-branch' }, repo.detached ? t('branch.detachedShort') : repo.branch ?? t('branch.unknown')),
+                      h(
+                        'span',
+                        { className: `gcf-repo-state${repo.clean ? '' : ' is-dirty'}` },
+                        repo.clean ? t('status.clean') : format(t, 'status.changes', { n: repo.changed }),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
         ),
       );
     }
@@ -1762,9 +1808,7 @@ body[data-ds-dark-theme] .gcf-dock {
       const conflictRows = (view.conflictRows ?? []).map((row) => ({ ...row, kind: 'conflict' }));
       const graphRows = view.rows;
 
-      const card = collapsed
-        ? null
-        : h(
+      const card = h(
             Reveal,
             null,
             h(
@@ -1779,7 +1823,7 @@ body[data-ds-dark-theme] .gcf-dock {
               h(PendingLine, { pending: view.pending, t }),
               h(
                 'div',
-                { className: 'gcf-body is-open', 'data-gcf': 'body' },
+                { className: `gcf-body${collapsed ? '' : ' is-open'}`, 'data-gcf': 'body', 'aria-hidden': collapsed },
                 h(
                   'div',
                   { className: 'gcf-body-inner' },
@@ -1853,7 +1897,10 @@ body[data-ds-dark-theme] .gcf-dock {
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
-        card,
+        // Card stays in the DOM so gcf-body can animate; hidden when collapsed.
+        h('div', { style: collapsed ? { overflow: 'hidden', height: 0, visibility: 'hidden' } : {} },
+          card,
+        ),
         h(Chips, { view, t, onToggle, expanded: !collapsed }),
       );
     }
