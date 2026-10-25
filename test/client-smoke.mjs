@@ -319,7 +319,8 @@ check(expanded.includes('gcf-card'), 'an expanded card renders the card');
 check(expanded.includes('gcf-chips'), 'an expanded card keeps the chips row');
 check(expanded.includes('"aria-expanded":true'), 'the toggle reports the expanded state');
 check(expanded.includes('action.collapse'), 'the expanded toggle offers to collapse');
-check(expanded.includes('"gcf-body is-open"'), 'an expanded card opens its body');
+check(expanded.includes('"gcf-body"'), 'an expanded card has a body element');
+check(!expanded.includes('"gcf-body is-open"'), 'body class is managed via ref, not directly in JSX');
 
 const collapsed = JSON.stringify(
   GitFlowView({ view: dirtyView, t, now, collapsed: true, onToggle: () => {} }),
@@ -348,7 +349,7 @@ const reposExpanded = JSON.stringify(
     onToggle: () => {},
   }),
 );
-check(reposExpanded.includes('gcf-body is-open'), 'the repository list expands too');
+check(reposExpanded.includes('"gcf-body"'), 'the repository list expands too');
 check(reposExpanded.includes('gcf-repo-row'), 'an expanded repository list shows its rows');
 
 const reposCollapsed = JSON.stringify(

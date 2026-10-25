@@ -290,6 +290,7 @@ window.__ModuleLoader__.load({
   padding: 4px 6px 4px 12px;
 }
 .gcf-card { padding: 10px 0 0; overflow: hidden; }
+/* RepositoryList collapses the body under a fixed header. */
 .gcf-body {
   display: grid;
   grid-template-rows: 0fr;
@@ -299,7 +300,6 @@ window.__ModuleLoader__.load({
 .gcf-body-inner {
   min-height: 0;
   overflow: hidden;
-  /* Fade content in/out so it doesn't flash as the container grows/shrinks. */
   opacity: 0;
   transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms;
 }
@@ -310,6 +310,14 @@ window.__ModuleLoader__.load({
   opacity: 1;
   transition: opacity 220ms cubic-bezier(0.4, 0, 0.2, 1) 100ms;
 }
+/* GitFlowView collapses the entire card (header + body) down to the chips. */
+.gcf-card-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 360ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.gcf-card-wrap.is-open { grid-template-rows: 1fr; }
+.gcf-card-wrap > * { min-height: 0; overflow: hidden; }
 .gcf-reveal { }
 .gcf-reveal-inner { overflow: hidden; }
 .gcf-reveal .gcf-card { animation: gcf-card-grow 450ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
@@ -1648,7 +1656,39 @@ body[data-ds-dark-theme] .gcf-dock {
       return squares;
     }
 
-    /** The always-present chips above the composer (video 0s / 8.6s). */
+    /**
+     * Smoothly expand/collapse a body element by toggling `is-open` one rAF
+     * after the React render, so the CSS transition always has two distinct
+     * paint frames (open → closed or closed → open) to interpolate between.
+     */
+    function useBodyRef(collapsed) {
+      const ref = React.useRef(null);
+      const prevCollapsed = React.useRef(collapsed);
+      React.useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        if (collapsed === prevCollapsed.current) {
+          // Initial mount: set the correct state without transition.
+          if (collapsed) el.classList.remove('is-open');
+          else el.classList.add('is-open');
+          prevCollapsed.current = collapsed;
+          return;
+        }
+        prevCollapsed.current = collapsed;
+        if (!collapsed) {
+          // Opening: add is-open on the next frame so the transition plays.
+          const raf = requestAnimationFrame(() => el.classList.add('is-open'));
+          return () => cancelAnimationFrame(raf);
+        } else {
+          // Closing: remove is-open on the next frame.
+          const raf = requestAnimationFrame(() => el.classList.remove('is-open'));
+          return () => cancelAnimationFrame(raf);
+        }
+      }, [collapsed]);
+      return ref;
+    }
+
+
     function Chips({ view, t, onToggle, expanded }) {
       const chips = [];
       // When collapsed: show branch name + state colour as the primary chip.
@@ -1723,6 +1763,7 @@ body[data-ds-dark-theme] .gcf-dock {
     }
 
     function RepositoryList({ repositories, t, collapsed = false, onToggle, pending }) {
+      const bodyRef = useBodyRef(collapsed);
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
@@ -1741,7 +1782,8 @@ body[data-ds-dark-theme] .gcf-dock {
             h(
               'div',
               {
-                className: `gcf-body${collapsed ? '' : ' is-open'}`,
+                className: 'gcf-body',
+                ref: bodyRef,
                 'data-gcf': 'body',
                 'aria-hidden': collapsed,
               },
@@ -1808,6 +1850,10 @@ body[data-ds-dark-theme] .gcf-dock {
       const conflictRows = (view.conflictRows ?? []).map((row) => ({ ...row, kind: 'conflict' }));
       const graphRows = view.rows;
 
+      const bodyRef = useBodyRef(collapsed);
+      // cardWrapRef drives the outer grid collapse — the entire card incl. header.
+      const cardWrapRef = useBodyRef(collapsed);
+
       const card = h(
             Reveal,
             null,
@@ -1823,7 +1869,7 @@ body[data-ds-dark-theme] .gcf-dock {
               h(PendingLine, { pending: view.pending, t }),
               h(
                 'div',
-                { className: `gcf-body${collapsed ? '' : ' is-open'}`, 'data-gcf': 'body', 'aria-hidden': collapsed },
+                { className: 'gcf-body', ref: bodyRef, 'data-gcf': 'body', 'aria-hidden': collapsed },
                 h(
                   'div',
                   { className: 'gcf-body-inner' },
@@ -1897,9 +1943,9 @@ body[data-ds-dark-theme] .gcf-dock {
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
-        // Card stays in the DOM so gcf-body can animate; hidden when collapsed.
-        h('div', { style: collapsed ? { overflow: 'hidden', height: 0, visibility: 'hidden' } : {} },
-          card,
+        // gcf-card-wrap animates the entire card (header + body) via grid-template-rows.
+        h('div', { className: 'gcf-card-wrap', ref: cardWrapRef, 'aria-hidden': collapsed },
+          h('div', null, card),
         ),
         h(Chips, { view, t, onToggle, expanded: !collapsed }),
       );
