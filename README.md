@@ -12,7 +12,7 @@ Generative Git workflow card for the DSH Web conversation: a strip that grows ou
 | 2a | Git read layer: `runGit`, porcelain v2 / numstat / log parsers, status snapshot | done, 8 real-Git tests |
 | 2b | `git_flow` tool + `gitFlow` projection + `/git-flow` command | done, 15 offline tests |
 | 3 | Card rendering from the Host-computed view model | done, 30 tests; visual pending install |
-| 4 | Motion (grow, stagger, scramble, progress, fold) | pending |
+| 4 | Motion: card reveal, row stagger, text scramble, number pop, reduced-motion | done, 33 tests; visual pending |
 | 5 | Mutations (stage / commit / merge / resolve) + approval | pending |
 | 6 | Checks mapping, conflict popover, push (opt-in) | pending |
 

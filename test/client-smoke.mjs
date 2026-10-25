@@ -61,6 +61,15 @@ const reactStub = {
   useSyncExternalStore(_subscribe, getSnapshot) {
     return getSnapshot();
   },
+  useState(initial) {
+    return [typeof initial === 'function' ? initial() : initial, () => {}];
+  },
+  useEffect() {
+    // Effects drive rAF/animation; the contract test asserts the static tree.
+  },
+  useRef(initial) {
+    return { current: initial };
+  },
 };
 
 await import(pathToFileURL(clientPath).href);
