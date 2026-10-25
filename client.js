@@ -30,6 +30,58 @@ window.__ModuleLoader__.load({
       return new URL(`${STATUS_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`, document.baseURI).toString();
     }
 
+    const COLLAPSE_KEY = 'gcf:collapsed:';
+
+    function readCollapsed(sessionId) {
+      try {
+        return window.localStorage.getItem(COLLAPSE_KEY + sessionId) === '1';
+      } catch {
+        return false;
+      }
+    }
+
+    function writeCollapsed(sessionId, value) {
+      try {
+        window.localStorage.setItem(COLLAPSE_KEY + sessionId, value ? '1' : '0');
+      } catch {
+        /* private mode: the state is simply not remembered */
+      }
+    }
+
+    /** Chevron toggle: points right when collapsed, down when expanded. */
+    function Toggle({ collapsed, onToggle, t }) {
+      if (typeof onToggle !== 'function') return null;
+      const label = collapsed ? t('action.expand') : t('action.collapse');
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'gcf-toggle',
+          'data-gcf': 'toggle',
+          'aria-expanded': !collapsed,
+          'aria-label': label,
+          title: label,
+          onClick: onToggle,
+        },
+        h(
+          'svg',
+          {
+            width: 12,
+            height: 12,
+            viewBox: '0 0 12 12',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 1.6,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': true,
+            focusable: false,
+          },
+          h('path', { d: 'M4.5 2.5L8 6l-3.5 3.5' }),
+        ),
+      );
+    }
+
     const CSS = `
 .gcf-dock {
   /* Node palette: git-control-dev @ origin/feat/thread-ui-replica, media/thread.css.
@@ -62,6 +114,13 @@ window.__ModuleLoader__.load({
   padding: 4px 6px 4px 12px;
 }
 .gcf-card { padding: 10px 0 0; overflow: hidden; }
+.gcf-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.gcf-body.is-open { grid-template-rows: 1fr; }
+.gcf-body-inner { min-height: 0; overflow: hidden; }
 .gcf-reveal {
   display: grid;
   grid-template-rows: 0fr;
@@ -280,6 +339,30 @@ window.__ModuleLoader__.load({
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.gcf-toggle {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+  cursor: pointer;
+}
+.gcf-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ececec);
+  color: var(--dsw-alias-label-primary, #1d1d1f);
+}
+.gcf-toggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #4a7fdc);
+  outline-offset: 1px;
+}
+.gcf-toggle svg { transition: transform 200ms ease; }
+.gcf-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
 .gcf-action {
   flex: none;
   margin-left: auto;
@@ -314,8 +397,10 @@ body[data-ds-dark-theme] .gcf-dock {
 }
 @media (prefers-reduced-motion: reduce) {
   .gcf-reveal { transition: none; }
+  .gcf-body { transition: none; }
   .gcf-row, .gcf-num { animation: none; }
   .gcf-status, .gcf-status i { transition: none; }
+  .gcf-toggle svg { transition: none; }
 }
 .gcf-label {
   flex: none;
@@ -350,6 +435,8 @@ body[data-ds-dark-theme] .gcf-dock {
       'foot.untracked': '未跟踪 {n}',
       'action.commit': '提交',
       'action.pending': '写操作由 AI 在对话中执行，需你审批',
+      'action.expand': '展开',
+      'action.collapse': '收起',
       'time.now': '刚刚',
       'time.minutes': '{n} 分钟前',
       'time.hours': '{n} 小时前',
@@ -379,6 +466,8 @@ body[data-ds-dark-theme] .gcf-dock {
       'foot.untracked': 'untracked {n}',
       'action.commit': 'Commit',
       'action.pending': 'The AI performs writes in the conversation, with your approval',
+      'action.expand': 'Expand',
+      'action.collapse': 'Collapse',
       'time.now': 'just now',
       'time.minutes': '{n}m ago',
       'time.hours': '{n}h ago',
@@ -558,10 +647,11 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function RepositoryList({ repositories, t }) {
+    function RepositoryList({ repositories, t, collapsed = false, onToggle }) {
       return h(
         'div',
         { className: 'gcf-dock', 'data-gcf': 'dock' },
+        h(Reveal, null,
         h(
           'section',
           { className: 'gcf-card', 'data-gcf': 'repositories' },
@@ -570,38 +660,52 @@ body[data-ds-dark-theme] .gcf-dock {
             { className: 'gcf-head' },
             h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
             h('span', { className: 'gcf-title' }, format(t, 'repos.title', { n: repositories.length })),
+            h(Toggle, { collapsed, onToggle, t }),
           ),
           h(
             'div',
-            { className: 'gcf-rows' },
-            repositories.map((repo, index) =>
+            {
+              className: `gcf-body${collapsed ? '' : ' is-open'}`,
+              'data-gcf': 'body',
+              'aria-hidden': collapsed,
+            },
+            h(
+              'div',
+              { className: 'gcf-body-inner' },
               h(
                 'div',
-                {
-                  key: repo.name,
-                  className: 'gcf-repo-row',
-                  'data-gcf': 'repo',
-                  style: { '--gcf-i': String(index) },
-                },
-                h('span', { className: 'gcf-repo-name' }, repo.name),
-                h('span', { className: 'gcf-repo-branch' }, repo.detached ? t('branch.detachedShort') : repo.branch ?? t('branch.unknown')),
-                h(
-                  'span',
-                  { className: `gcf-repo-state${repo.clean ? '' : ' is-dirty'}` },
-                  repo.clean ? t('status.clean') : format(t, 'status.changes', { n: repo.changed }),
+                { className: 'gcf-rows' },
+                repositories.map((repo, index) =>
+                  h(
+                    'div',
+                    {
+                      key: repo.name,
+                      className: 'gcf-repo-row',
+                      'data-gcf': 'repo',
+                      style: { '--gcf-i': String(index) },
+                    },
+                    h('span', { className: 'gcf-repo-name' }, repo.name),
+                    h('span', { className: 'gcf-repo-branch' }, repo.detached ? t('branch.detachedShort') : repo.branch ?? t('branch.unknown')),
+                    h(
+                      'span',
+                      { className: `gcf-repo-state${repo.clean ? '' : ' is-dirty'}` },
+                      repo.clean ? t('status.clean') : format(t, 'status.changes', { n: repo.changed }),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
         ),
+        ),
       );
     }
 
-    function GitFlowView({ view, t, now }) {
+    function GitFlowView({ view, t, now, collapsed = false, onToggle }) {
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') {
         return Array.isArray(view.repositories) && view.repositories.length > 0
-          ? h(RepositoryList, { repositories: view.repositories, t })
+          ? h(RepositoryList, { repositories: view.repositories, t, collapsed, onToggle })
           : null;
       }
       if (view.phase === 'clean') return h(CleanBar, { view, t });
@@ -631,37 +735,50 @@ body[data-ds-dark-theme] .gcf-dock {
             h('span', { className: 'gcf-title', title: branchText(view, t) }, branchText(view, t)),
             h(Tracking, { view, t }),
             h('span', { className: 'gcf-status' }, h('i', null), h(Scramble, { text: statusText(view, t) })),
+            h(Toggle, { collapsed, onToggle, t }),
           ),
           h(
             'div',
-            { className: 'gcf-rows', 'data-gcf': 'rows' },
-            view.rows.map((row, index) =>
-              h(Row, { key: row.id, row, t, now, index, scramble: index === 0 }),
-            ),
-          ),
-          view.hiddenCommits > 0
-            ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
-            : null,
-          h(
-            'footer',
-            { className: 'gcf-foot' },
+            {
+              className: `gcf-body${collapsed ? '' : ' is-open'}`,
+              'data-gcf': 'body',
+              'aria-hidden': collapsed,
+            },
             h(
-              'span',
-              { className: 'gcf-diff' },
-              h('b', { key: `a${view.diffStat.add}`, className: 'gcf-num' }, `+${view.diffStat.add}`),
-              h('em', { key: `d${view.diffStat.del}`, className: 'gcf-num' }, `−${view.diffStat.del}`),
-            ),
-            h('span', { className: 'gcf-counts' }, counts.join(' · ')),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'gcf-action',
-                disabled: true,
-                title: t('action.pending'),
-                'data-gcf': 'commit',
-              },
-              t('action.commit'),
+              'div',
+              { className: 'gcf-body-inner' },
+              h(
+                'div',
+                { className: 'gcf-rows', 'data-gcf': 'rows' },
+                view.rows.map((row, index) =>
+                  h(Row, { key: row.id, row, t, now, index, scramble: index === 0 }),
+                ),
+              ),
+              view.hiddenCommits > 0
+                ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
+                : null,
+              h(
+                'footer',
+                { className: 'gcf-foot' },
+                h(
+                  'span',
+                  { className: 'gcf-diff' },
+                  h('b', { key: `a${view.diffStat.add}`, className: 'gcf-num' }, `+${view.diffStat.add}`),
+                  h('em', { key: `d${view.diffStat.del}`, className: 'gcf-num' }, `−${view.diffStat.del}`),
+                ),
+                h('span', { className: 'gcf-counts' }, counts.join(' · ')),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'gcf-action',
+                    disabled: true,
+                    title: t('action.pending'),
+                    'data-gcf': 'commit',
+                  },
+                  t('action.commit'),
+                ),
+              ),
             ),
           ),
         ),
@@ -718,8 +835,20 @@ body[data-ds-dark-theme] .gcf-dock {
         };
       }, [sessionId]);
 
+      const [collapsed, setCollapsed] = React.useState(() => readCollapsed(sessionId));
+      React.useEffect(() => {
+        setCollapsed(readCollapsed(sessionId));
+      }, [sessionId]);
+      React.useEffect(() => {
+        writeCollapsed(sessionId, collapsed);
+      }, [sessionId, collapsed]);
+
+      const toggle = React.useCallback(() => {
+        setCollapsed((value) => !value);
+      }, []);
+
       const view = live ?? projected;
-      return h(GitFlowView, { view, t, now: Date.now() });
+      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle });
     }
 
     return {

@@ -245,9 +245,64 @@ check(conflict.includes('"data-phase":"conflicts"'), 'conflicts set the phase at
 check(conflict.includes('is-conflict'), 'conflicts set the conflict class');
 check(conflict.includes('status.conflicts'), 'conflicts render the conflict label');
 
+const expanded = JSON.stringify(
+  GitFlowView({ view: dirtyView, t, now, collapsed: false, onToggle: () => {} }),
+);
+check(expanded.includes('gcf-card'), 'an expanded card renders the card');
+check(expanded.includes('gcf-toggle'), 'an expanded card renders the toggle');
+check(expanded.includes('"aria-expanded":true'), 'the toggle reports the expanded state');
+check(expanded.includes('action.collapse'), 'the expanded toggle offers to collapse');
+check(expanded.includes('"className":"gcf-body is-open"'), 'an expanded card opens its body');
+
+const collapsed = JSON.stringify(
+  GitFlowView({ view: dirtyView, t, now, collapsed: true, onToggle: () => {} }),
+);
+check(collapsed.includes('gcf-card'), 'a collapsed card keeps the same card shell (no swap)');
+check(collapsed.includes('"className":"gcf-body"'), 'a collapsed card closes its body');
+check(collapsed.includes('"aria-hidden":true'), 'a collapsed body is hidden from assistive tech');
+check(collapsed.includes('gcf-toggle'), 'a collapsed card keeps the toggle');
+check(collapsed.includes('"aria-expanded":false'), 'the toggle reports the collapsed state');
+check(collapsed.includes('action.expand'), 'the collapsed toggle offers to expand');
+check(collapsed.includes('status.changes'), 'a collapsed card still shows the status');
+
+const reposExpanded = JSON.stringify(
+  GitFlowView({
+    view: {
+      presence: 'absent',
+      revision: 0,
+      updatedAt: null,
+      repositories: [{ name: 'alpha', branch: 'main', detached: false, changed: 1, clean: false }],
+    },
+    t,
+    now,
+    collapsed: false,
+    onToggle: () => {},
+  }),
+);
+check(reposExpanded.includes('gcf-body is-open'), 'the repository list expands too');
+check(reposExpanded.includes('gcf-repo-row'), 'an expanded repository list shows its rows');
+
+const reposCollapsed = JSON.stringify(
+  GitFlowView({
+    view: {
+      presence: 'absent',
+      revision: 0,
+      updatedAt: null,
+      repositories: [{ name: 'alpha', branch: 'main', detached: false, changed: 1, clean: false }],
+    },
+    t,
+    now,
+    collapsed: true,
+    onToggle: () => {},
+  }),
+);
+check(reposCollapsed.includes('"className":"gcf-body"'), 'the repository list collapses too');
+check(reposCollapsed.includes('gcf-toggle'), 'the repository list has a toggle');
+check(reposCollapsed.includes('alpha'), 'collapsed repository rows stay in the DOM for the height transition');
+
 if (failures.length > 0) {
   console.error('FAIL');
   for (const failure of failures) console.error(' -', failure);
   process.exit(1);
 }
-console.log('PASS  client module: 1 dock entry, 2 dictionaries, 1 stylesheet, 5 render phases');
+console.log('PASS  client module: 1 dock entry, 2 dictionaries, 1 stylesheet, 5 render phases, collapse/expand');
