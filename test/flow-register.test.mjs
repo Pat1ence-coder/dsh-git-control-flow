@@ -29,7 +29,7 @@ function snapshot(overrides = {}) {
 }
 
 /** Minimal Cordis-like context that records what the plugin registers. */
-function harness({ readStatus, agents, connection, runGit, approval, discover } = {}) {
+function harness({ readStatus, agents, connection, runGit, approval, discover, projectionState } = {}) {
   const captured = {};
   const effects = [];
   const calls = [];
@@ -39,6 +39,9 @@ function harness({ readStatus, agents, connection, runGit, approval, discover } 
       register(definition) {
         captured.projection = definition;
         return () => {};
+      },
+      stateOf() {
+        return projectionState;
       },
     },
     tools: {
@@ -222,6 +225,35 @@ test('the status route serves the card model for a known session', async () => {
   assert.equal(view.branch.name, 'main');
   assert.equal(read.length, 1);
   assert.equal(read[0].directory, '/sessions/repo');
+});
+
+test('the status route carries the projection pending state for the overlay', async () => {
+  const pending = { phase: 'awaiting-approval', action: 'stage', reason: 'Stage 1 path(s) in test: a.ts' };
+  const { captured } = harness({
+    readStatus: async (directory) => snapshot({ root: directory }),
+    agents: { get: () => ({ session: { cwd: '/repo' } }) },
+    connection: {},
+    projectionState: { presence: 'repo', status: null, revision: 1, updatedAt: 1, pending },
+  });
+
+  const response = await captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=s'),
+  );
+  const view = await response.json();
+  assert.deepEqual(view.pending, pending);
+});
+
+test('the status route omits pending when the projection has none', async () => {
+  const { captured } = harness({
+    readStatus: async (directory) => snapshot({ root: directory }),
+    agents: { get: () => ({ session: { cwd: '/repo' } }) },
+    connection: {},
+  });
+
+  const response = await captured.route.fetch(
+    new Request('http://local/api/git-flow.status?sessionId=s'),
+  );
+  assert.equal((await response.json()).pending, null);
 });
 
 test('the status route rejects a missing or unknown session', async () => {

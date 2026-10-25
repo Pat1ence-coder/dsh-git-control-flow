@@ -32,6 +32,35 @@ window.__ModuleLoader__.load({
 
     const COLLAPSE_KEY = 'gcf:collapsed:';
 
+    /**
+     * The dock lives inside the composer fallback, which the host replaces with
+     * the approval panel while an approval is pending. This module-level store
+     * keeps the last session and view so a `shell.overlay` entry can keep
+     * showing the pending card for exactly that window.
+     */
+    const pendingListeners = new Set();
+    let pendingSnapshot = { sessionId: null, view: null };
+
+    function publishPendingState(sessionId, view) {
+      const next = { sessionId, view: view ?? null };
+      if (pendingSnapshot.sessionId === next.sessionId && pendingSnapshot.view === next.view) return;
+      pendingSnapshot = next;
+      for (const listener of pendingListeners) listener();
+    }
+
+    function subscribePending(listener) {
+      pendingListeners.add(listener);
+      return () => pendingListeners.delete(listener);
+    }
+
+    function usePendingState() {
+      return React.useSyncExternalStore(
+        subscribePending,
+        () => pendingSnapshot,
+        () => pendingSnapshot,
+      );
+    }
+
     function readCollapsed(sessionId) {
       try {
         return window.localStorage.getItem(COLLAPSE_KEY + sessionId) === '1';
@@ -113,6 +142,75 @@ window.__ModuleLoader__.load({
         typeof pending.reason === 'string' && pending.reason !== ''
           ? h('span', { className: 'gcf-pending-reason', title: pending.reason }, pending.reason)
           : null,
+      );
+    }
+
+    /** Floating copy of the pending card, shown while the approval replaces the composer. */
+    function PendingOverlay({ t, view }) {
+      const stored = usePendingState();
+      const [polled, setPolled] = React.useState(null);
+
+      // Robust path: the dock may be unmounted before it ever saw the pending
+      // state, so the overlay asks the status route directly (the Host merges
+      // the projection's pending state into that response).
+      React.useEffect(() => {
+        const sessionId = stored.sessionId;
+        if (sessionId === null || typeof fetch !== 'function') return () => {};
+        let cancelled = false;
+        setPolled(null);
+
+        const load = async () => {
+          try {
+            const response = await fetch(statusUrl(sessionId), {
+              headers: { accept: 'application/json' },
+              cache: 'no-store',
+            });
+            if (!response.ok) return;
+            const payload = await response.json();
+            if (!cancelled) setPolled(payload);
+          } catch {
+            /* keep the last value */
+          }
+        };
+
+        load();
+        const timer = setInterval(load, 4000);
+        return () => {
+          cancelled = true;
+          clearInterval(timer);
+        };
+      }, [stored.sessionId]);
+
+      const model =
+        view !== undefined
+          ? view
+          : polled !== null && polled.pending !== null && polled.pending !== undefined
+            ? polled
+            : stored.view;
+      if (model === null || model === undefined) return null;
+      const pending = model.pending;
+      if (pending === null || pending === undefined) return null;
+      return h(
+        'div',
+        { className: 'gcf-overlay', 'data-gcf': 'overlay' },
+        h(
+          'div',
+          { className: 'gcf-overlay-card', 'data-phase': pending.phase },
+          h(
+            'div',
+            { className: 'gcf-overlay-head' },
+            h('span', { className: 'gcf-glyph' }, h(BranchGlyph)),
+            h(
+              'span',
+              { className: 'gcf-overlay-title' },
+              model.presence === 'repo' ? branchText(model, t) : t('app.title'),
+            ),
+            model.presence === 'repo'
+              ? h('span', { className: 'gcf-overlay-status' }, h('i', null), statusText(model, t))
+              : null,
+          ),
+          h(PendingLine, { pending, t }),
+        ),
       );
     }
 
@@ -417,6 +515,53 @@ window.__ModuleLoader__.load({
   background: transparent;
   color: var(--dsw-alias-label-tertiary, #8a8a8a);
   cursor: pointer;
+}
+.gcf-overlay {
+  position: fixed;
+  top: 72px;
+  right: 20px;
+  z-index: 60;
+  width: min(320px, calc(100vw - 40px));
+  pointer-events: none;
+}
+.gcf-overlay-card {
+  pointer-events: auto;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
+  border-radius: var(--dsw-radius-md, 10px);
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  box-shadow: var(--dsw-elevation-panel, 0 6px 24px rgba(16, 24, 40, 0.12));
+  padding: 10px 0 0;
+}
+.gcf-overlay-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 6px;
+}
+.gcf-overlay-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary, #1d1d1f);
+}
+.gcf-overlay-status {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #5f5f5f);
+}
+.gcf-overlay-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .gcf-toggle:hover {
   background: var(--dsw-alias-interactive-bg-hover, #ececec);
@@ -932,13 +1077,16 @@ body[data-ds-dark-theme] .gcf-dock {
       }, []);
 
       const view = live ?? projected;
+      React.useEffect(() => {
+        publishPendingState(sessionId, view);
+      }, [sessionId, view]);
       return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle });
     }
 
     return {
       inject: ['slots', 'locale', 'sessions'],
       /** Exposed for the contract smoke test; the module loader ignores extra fields. */
-      components: { GitFlowView, GitFlowDock },
+      components: { GitFlowView, GitFlowDock, PendingOverlay },
       apply(ctx) {
         ctx.effect(
           () => ctx.locale.register(NS, { zh, en }),
@@ -974,6 +1122,14 @@ body[data-ds-dark-theme] .gcf-dock {
               },
             },
             GitFlowDock,
+          ),
+        );
+        // The approval panel replaces the composer fallback, which unmounts the
+        // dock; this frame-wide entry keeps the pending card visible instead.
+        ctx.slots.inject('shell.overlay', () =>
+          ctx.slots.register(
+            { name: 'shell.overlay', id: 'git-control-flow-pending', order: 50, locale: NS },
+            PendingOverlay,
           ),
         );
       },

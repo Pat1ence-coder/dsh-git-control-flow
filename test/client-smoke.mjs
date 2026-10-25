@@ -130,16 +130,21 @@ const ctx = {
 
 plugin.apply(ctx);
 
-check(injectedSlots.length === 1 && injectedSlots[0] === 'conversation.input.dock', `injected slots: ${injectedSlots.join(',')}`);
-check(registered.length === 1, `expected 1 slot registration, got ${registered.length}`);
+check(injectedSlots.length === 2, `injected slots: ${injectedSlots.join(',')}`);
+check(injectedSlots.includes('conversation.input.dock'), 'the dock slot must be injected');
+check(injectedSlots.includes('shell.overlay'), 'the overlay slot must be injected');
+check(registered.length === 2, `expected 2 slot registrations, got ${registered.length}`);
 
-const entry = registered[0];
+const entry = registered.find((item) => item.options.name === 'conversation.input.dock');
+const overlayEntry = registered.find((item) => item.options.name === 'shell.overlay');
 check(entry?.options?.name === 'conversation.input.dock', 'slot name must be conversation.input.dock');
 check(entry?.options?.id === 'git-control-flow', `slot id is ${entry?.options?.id}`);
 check(entry?.options?.order === 10, `slot order is ${entry?.options?.order}`);
 check(entry?.options?.locale === 'gitControlFlow', `slot locale is ${entry?.options?.locale}`);
 check(typeof entry?.options?.inject === 'function', 'slot registration must inject props');
 check(entry?.Component === plugin.components.GitFlowDock, 'the dock component must be registered');
+check(overlayEntry?.options?.id === 'git-control-flow-pending', 'the overlay entry needs its own id');
+check(overlayEntry?.Component === plugin.components.PendingOverlay, 'the overlay component must be registered');
 
 const props = entry?.options?.inject?.('session-test');
 check(props?.projection === null, 'a missing session binding injects a null projection');
@@ -325,6 +330,19 @@ const runningPending = render({
   pending: { phase: 'running', action: 'commit', reason: 'Commit 1 staged file(s) on main.' },
 });
 check(runningPending.includes('pending.running'), 'a running write is labelled as running');
+
+const { PendingOverlay } = plugin.components;
+check(PendingOverlay({ t, view: null }) === null, 'the overlay renders nothing without a view');
+check(
+  PendingOverlay({ t, view: { ...dirtyView, pending: null } }) === null,
+  'the overlay renders nothing when no write is pending',
+);
+
+const overlay = JSON.stringify(PendingOverlay({ t, view: { ...dirtyView, pending: pendingWrite } }));
+check(overlay.includes('gcf-overlay'), 'the overlay renders a floating card during approval');
+check(overlay.includes('pending.awaiting'), 'the overlay shows the approval state');
+check(overlay.includes('Stage 1 path'), 'the overlay shows the approval reason');
+check(overlay.includes('feat/x'), 'the overlay shows the branch');
 
 if (failures.length > 0) {
   console.error('FAIL');
