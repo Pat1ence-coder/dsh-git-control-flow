@@ -507,9 +507,15 @@ window.__ModuleLoader__.load({
 .gcf-pill.is-branch { background: #f2f2f2; color: #5f5f5f; }
 .gcf-pill.is-remote { background: #e6f4f1; color: #2f9e8f; }
 .gcf-pill.is-tag { background: #fdf3e2; color: #b07a2a; }
-.gcf-row {
+/* Row entrance and exit: only applied by useStableRows, not unconditionally. */
+.gcf-row.is-entering {
   animation: gcf-row-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  animation-delay: calc(var(--rev, 0) * 45ms + 120ms);
+  animation-delay: calc(var(--rev, 0) * 45ms + 60ms);
+}
+.gcf-row.is-exiting {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 260ms ease;
 }
 .gcf-swap {
   animation: gcf-decode 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -1343,6 +1349,105 @@ body[data-ds-dark-theme] .gcf-dock {
      * The whole card's graph in one SVG (replica render.ts): long edges between
      * rows, nodes on top, draw-on animation via `pathLength`.
      */
+    /**
+     * Stable keyed row list: nodes survive re-renders so CSS
+     * `transition: transform` can slide them when --y changes.
+     * New rows get `is-entering`; removed rows get `is-exiting` and are
+     * removed from the DOM after 300ms (or immediately if reduced-motion).
+     */
+    function useStableRows(nextRows, reduced) {
+      // stableMap: id → { row, y } for currently rendered rows.
+      const stableRef = React.useRef(new Map());
+      // exitSet: id → true, rows fading out but not yet removed.
+      const exitRef = React.useRef(new Set());
+      const [tick, setTick] = React.useState(0);
+      const bump = React.useCallback(() => setTick((n) => n + 1), []);
+
+      // Derive the next stable map from the incoming rows.
+      const nextIds = new Set(nextRows.map((r) => r.id));
+      const prevIds = new Set(stableRef.current.keys());
+
+      // Added rows: mark as entering.
+      const entering = new Set();
+      for (const row of nextRows) {
+        if (!prevIds.has(row.id) && !exitRef.current.has(row.id)) entering.add(row.id);
+      }
+
+      // Removed rows: start exit timer.
+      React.useEffect(() => {
+        for (const id of prevIds) {
+          if (!nextIds.has(id) && !exitRef.current.has(id)) {
+            exitRef.current.add(id);
+            if (reduced) {
+              exitRef.current.delete(id);
+              stableRef.current.delete(id);
+            } else {
+              const timerId = setTimeout(() => {
+                exitRef.current.delete(id);
+                stableRef.current.delete(id);
+                bump();
+              }, 300);
+              // Ignore cleanup: the timeout is short and bump is stable.
+              void timerId;
+            }
+          }
+        }
+        bump();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [nextRows]);
+
+      // Rebuild the stable map for this render.
+      const newMap = new Map();
+      // Keep existing rows (including those exiting).
+      for (const [id, entry] of stableRef.current) newMap.set(id, entry);
+      // Update y for rows that stayed, add new ones.
+      nextRows.forEach((row, index) => {
+        newMap.set(row.id, { row, y: index * ROW_HEIGHT });
+      });
+      stableRef.current = newMap;
+
+      // Build ordered output: next-order first, then exiting rows at the end.
+      const ordered = nextRows.map((row, index) => ({
+        row,
+        y: index * ROW_HEIGHT,
+        entering: entering.has(row.id),
+        exiting: false,
+      }));
+      for (const [id, entry] of newMap) {
+        if (exitRef.current.has(id)) {
+          ordered.push({ row: entry.row, y: entry.y, entering: false, exiting: true });
+        }
+      }
+      return ordered;
+    }
+
+    function GraphSection({ rows, edges, t, now, reduced }) {
+      const entries = useStableRows(rows, reduced);
+      const graphHeight = rows.length * ROW_HEIGHT;
+      return h(
+        'div',
+        { className: 'gcf-graph', style: { height: `${graphHeight}px` } },
+        h(GraphRail, { rows, edges }),
+        h(
+          'div',
+          { className: 'gcf-rows', 'data-gcf': 'rows' },
+          entries.map(({ row, y, entering, exiting }, index) =>
+            h(Row, {
+              key: exiting ? `exit:${row.id}` : row.id,
+              row,
+              t,
+              now,
+              index: Math.round(y / ROW_HEIGHT),
+              total: rows.length,
+              scramble: !exiting && row.kind === 'commit' && index === 0,
+              entering,
+              exiting,
+            }),
+          ),
+        ),
+      );
+    }
+
     function GraphRail({ rows, edges }) {
       const commits = rows.filter((row) => row.kind === 'commit');
       const maxLane = Math.max(0, ...commits.map((row) => (Number.isInteger(row.lane) ? row.lane : 0)));
@@ -1392,12 +1497,13 @@ body[data-ds-dark-theme] .gcf-dock {
       return name.startsWith('origin/') ? name.slice('origin/'.length) : name;
     }
 
-    function Row({ row, t, now, index, total, scramble }) {
+    function Row({ row, t, now, index, total, scramble, entering, exiting }) {
+      const motionClass = exiting ? ' is-exiting' : (entering === false ? '' : ' is-entering');
       if (row.kind === 'operation') {
         return h(
           'div',
           {
-            className: 'gcf-row gcf-row--operation',
+            className: `gcf-row gcf-row--operation${motionClass}`,
             'data-gcf': 'row',
             'data-kind': 'operation',
             style: { '--gcf-i': String(index), '--y': `${index * ROW_HEIGHT}px` },
@@ -1429,7 +1535,7 @@ body[data-ds-dark-theme] .gcf-dock {
         return h(
           'div',
           {
-            className: 'gcf-row gcf-row--working',
+            className: `gcf-row gcf-row--working${motionClass}`,
             'data-gcf': 'row',
             'data-kind': 'working',
             style: {
@@ -1446,7 +1552,7 @@ body[data-ds-dark-theme] .gcf-dock {
       return h(
         'div',
         {
-          className: `gcf-row${(row.lane ?? 0) === 0 ? ' is-strong' : ''}`,
+          className: `gcf-row${(row.lane ?? 0) === 0 ? ' is-strong' : ''}${motionClass}`,
           'data-gcf': 'row',
           'data-kind': 'commit',
           style: {
@@ -1628,7 +1734,6 @@ body[data-ds-dark-theme] .gcf-dock {
       // graph rows, so the SVG y-coordinates stay correct.
       const conflictRows = (view.conflictRows ?? []).map((row) => ({ ...row, kind: 'conflict' }));
       const graphRows = view.rows;
-      const graphHeight = graphRows.length * ROW_HEIGHT;
 
       const card = collapsed
         ? null
@@ -1651,26 +1756,7 @@ body[data-ds-dark-theme] .gcf-dock {
                 h(
                   'div',
                   { className: 'gcf-body-inner' },
-                  h(
-                    'div',
-                    { className: 'gcf-graph', style: { height: `${graphHeight}px` } },
-                    h(GraphRail, { rows: graphRows, edges: view.edges ?? [] }),
-                    h(
-                      'div',
-                      { className: 'gcf-rows', 'data-gcf': 'rows' },
-                      graphRows.map((row, index) =>
-                        h(Row, {
-                          key: row.id,
-                          row,
-                          t,
-                          now,
-                          index,
-                          total: graphRows.length,
-                          scramble: row.kind === 'commit' && index === 0,
-                        }),
-                      ),
-                    ),
-                  ),
+                  h(GraphSection, { rows: graphRows, edges: view.edges ?? [], t, now, reduced: prefersReducedMotion() }),
                   view.hiddenCommits > 0
                     ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
                     : null,
