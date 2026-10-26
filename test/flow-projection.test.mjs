@@ -55,7 +55,7 @@ test('contract names stay aligned', () => {
   assert.equal(GIT_FLOW_TOOL, 'git_flow');
   assert.equal(GIT_FLOW_COMMAND, 'git-flow');
   assert.equal(GIT_FLOW_KEY, 'gitFlow');
-  assert.deepEqual(GIT_FLOW_ACTIONS, ['status', 'stage', 'commit', 'merge', 'abort', 'resolve']);
+  assert.deepEqual(GIT_FLOW_ACTIONS, ['status', 'diff', 'stage', 'commit', 'merge', 'abort', 'resolve']);
 });
 
 test('the projection exposes the registered key, version and a cached card view', () => {

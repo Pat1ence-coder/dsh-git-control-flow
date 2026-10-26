@@ -376,3 +376,76 @@ test('a rejected resolve changes nothing', async () => {
   assert.equal(value.kind, 'rejected');
   assert.equal(captured.git.length, 0);
 });
+
+// ── diff ───────────────────────────────────────────────────────────────────
+
+test('diff returns nothing-staged when nothing is staged', async () => {
+  const captured = harness({ statuses: [snapshot()] });
+  const value = await captured.tool.execute({ action: 'diff' }, exec);
+  assert.equal(value.kind, 'nothing-staged');
+  assert.equal(captured.git.length, 0);
+});
+
+test('diff returns patch, stat and author info', async () => {
+  const captured = harness({
+    statuses: [snapshot({ staged: { count: 1, files: [] }, counts: { staged: 1, unstaged: 0, untracked: 0, conflicts: 0, working: 1 } })],
+    runGit: (root, argv) => {
+      if (argv[0] === 'config' && argv[1] === 'user.name') return { code: 0, stdout: 'Pat1ence-coder', stderr: '' };
+      if (argv[0] === 'config' && argv[1] === 'user.email') return { code: 0, stdout: 'dev@example.com', stderr: '' };
+      if (argv[0] === 'diff' && argv.includes('--stat')) return { code: 0, stdout: ' src/a.ts | 2 ++\n', stderr: '' };
+      if (argv[0] === 'diff' && argv.includes('-U3')) return { code: 0, stdout: '+const x = 1;\n', stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  const value = await captured.tool.execute({ action: 'diff' }, exec);
+  assert.equal(value.kind, 'diff');
+  assert.equal(value.stagedCount, 1);
+  assert.equal(value.author.name, 'Pat1ence-coder');
+  assert.equal(value.author.email, 'dev@example.com');
+  assert.match(value.stat, /src\/a\.ts/);
+  assert.match(value.patch, /const x = 1/);
+  assert.equal(value.truncated, false);
+});
+
+test('diff filters secret-like lines', async () => {
+  const captured = harness({
+    statuses: [snapshot({ staged: { count: 1, files: [] }, counts: { staged: 1, unstaged: 0, untracked: 0, conflicts: 0, working: 1 } })],
+    runGit: (root, argv) => {
+      if (argv[0] === 'diff' && argv.includes('-U3')) {
+        return { code: 0, stdout: '+API_TOKEN=sk-abc123\n+normal line\n', stderr: '' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  const value = await captured.tool.execute({ action: 'diff' }, exec);
+  assert.match(value.patch, /REDACTED/);
+  assert.match(value.patch, /normal line/);
+});
+
+test('diff truncates large patches', async () => {
+  const bigPatch = '+' + 'x'.repeat(9000);
+  const captured = harness({
+    statuses: [snapshot({ staged: { count: 1, files: [] }, counts: { staged: 1, unstaged: 0, untracked: 0, conflicts: 0, working: 1 } })],
+    runGit: (root, argv) => {
+      if (argv[0] === 'diff' && argv.includes('-U3')) return { code: 0, stdout: bigPatch, stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  const value = await captured.tool.execute({ action: 'diff' }, exec);
+  assert.equal(value.truncated, true);
+  assert.match(value.patch, /truncated/);
+});
+
+test('diff reports missing author fields as null', async () => {
+  const captured = harness({
+    statuses: [snapshot({ staged: { count: 1, files: [] }, counts: { staged: 1, unstaged: 0, untracked: 0, conflicts: 0, working: 1 } })],
+    runGit: (root, argv) => {
+      if (argv[0] === 'config') return { code: 1, stdout: '', stderr: '' };
+      if (argv[0] === 'diff' && argv.includes('-U3')) return { code: 0, stdout: '+x\n', stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  const value = await captured.tool.execute({ action: 'diff' }, exec);
+  assert.equal(value.author.name, null);
+  assert.equal(value.author.email, null);
+});

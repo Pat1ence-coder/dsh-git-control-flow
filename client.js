@@ -22,12 +22,63 @@ window.__ModuleLoader__.load({
     const NS = 'gitControlFlow';
     const STYLE_ID = 'gcf-styles';
     const PROJECTION_KEY = 'gitFlow';
+    const DIFF_ROUTE = 'api/git-flow.diff';
     const STATUS_ROUTE = 'api/git-flow.status';
     const POLL_MS = 6000;
 
     /** Same-origin URL for the Host status route; the session id is the only input. */
     function statusUrl(sessionId) {
       return new URL(`${STATUS_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`, document.baseURI).toString();
+    }
+
+    function diffUrl(sessionId) {
+      return new URL(`${DIFF_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`, document.baseURI).toString();
+    }
+
+    /** Build the user-visible review request message injected into the session. */
+    function buildReviewMessage(diff, t) {
+      const lines = [];
+      const lang = document.documentElement.lang || 'zh';
+      const isChinese = lang.startsWith('zh');
+
+      if (isChinese) {
+        lines.push('请帮我 review 以下暂存的改动，检查是否有敏感信息或风险，然后生成合适的 commit message 并提交。');
+      } else {
+        lines.push('Please review the following staged changes, check for any sensitive information or risks, then generate an appropriate commit message and commit.');
+      }
+
+      if (diff.author.name === null || diff.author.email === null) {
+        lines.push('');
+        lines.push(isChinese
+          ? '⚠️ 注意：git config 中未配置 user.name 或 user.email，提交前请先询问我。'
+          : '⚠️ Note: git config user.name or user.email is not set. Please ask me for these before committing.');
+      }
+
+      lines.push('');
+      lines.push(isChinese ? `分支：${diff.branch}，已暂存 ${diff.stagedCount} 个文件` : `Branch: ${diff.branch}, ${diff.stagedCount} staged file(s)`);
+
+      if (diff.stat) {
+        lines.push('');
+        lines.push('```');
+        lines.push(diff.stat);
+        lines.push('```');
+      }
+
+      if (diff.patch) {
+        lines.push('');
+        lines.push(isChinese ? '**改动内容（已过滤敏感信息）：**' : '**Diff (sensitive lines redacted):**');
+        lines.push('');
+        lines.push('```diff');
+        lines.push(diff.patch);
+        lines.push('```');
+      }
+
+      if (diff.truncated) {
+        lines.push('');
+        lines.push(isChinese ? '_（diff 过大，已截断）_' : '_(diff truncated — too large)_');
+      }
+
+      return lines.join('\n');
     }
 
     const COLLAPSE_KEY = 'gcf:collapsed:';
@@ -886,6 +937,7 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-primary, #1d1d1f);
 }
 .gcf-action:disabled { opacity: 0.55; cursor: default; }
+.gcf-action-spinner { display: inline-flex; align-items: center; gap: 5px; pointer-events: none; }
 .gcf-action:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4a7fdc); outline-offset: 1px; }
 .gcf-num {
   display: inline-block;
@@ -1073,6 +1125,7 @@ body[data-ds-dark-theme] .gcf-dock {
       'foot.untracked': '未跟踪 {n}',
       'action.commit': '提交',
       'action.pending': '写操作由 AI 在对话中执行，需你审批',
+      'action.reviewing': '正在 review…',
       'action.expand': '展开',
       'action.collapse': '收起',
       'state.clean': '干净',
@@ -1122,6 +1175,7 @@ body[data-ds-dark-theme] .gcf-dock {
       'foot.untracked': 'untracked {n}',
       'action.commit': 'Commit',
       'action.pending': 'The AI performs writes in the conversation, with your approval',
+      'action.reviewing': 'Reviewing…',
       'action.expand': 'Expand',
       'action.collapse': 'Collapse',
       'state.clean': 'Clean',
@@ -1823,7 +1877,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GitFlowView({ view, t, now, collapsed = false, onToggle }) {
+    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false }) {
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') {
         if (Array.isArray(view.repositories) && view.repositories.length > 0) {
@@ -1932,11 +1986,14 @@ body[data-ds-dark-theme] .gcf-dock {
                       {
                         type: 'button',
                         className: `gcf-action${view.counts.conflicts > 0 ? ' is-warn' : ''}`,
-                        disabled: true,
-                        title: t('action.pending'),
+                        disabled: reviewing || view.pending !== null || typeof onAction !== 'function',
+                        title: reviewing ? t('action.reviewing') : (view.pending !== null ? t('action.pending') : undefined),
                         'data-gcf': view.counts.conflicts > 0 ? 'resolve' : 'commit',
+                        onClick: onAction,
                       },
-                      view.counts.conflicts > 0 ? t('action.resolve') : t('action.commit'),
+                      reviewing
+                        ? h('span', { className: 'gcf-action-spinner' }, h(Spinner))
+                        : (view.counts.conflicts > 0 ? t('action.resolve') : t('action.commit')),
                     ),
                   ),
                 ),
@@ -1955,7 +2012,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GitFlowDock({ projection, sessionId, t }) {
+    function GitFlowDock({ projection, sessionId, t, sendReview }) {
       const subscribe = React.useCallback(
         (notify) => (projection === null || projection === undefined ? () => {} : projection.subscribe(notify)),
         [projection],
@@ -2017,7 +2074,29 @@ body[data-ds-dark-theme] .gcf-dock {
       }, []);
 
       const view = live ?? projected;
-      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle });
+
+      // onAction: handles the primary button click (commit / resolve).
+      // Fetches staged diff, builds a review message, and injects it as a
+      // user message so the LLM reviews and then calls git_flow commit/resolve.
+      const [reviewing, setReviewing] = React.useState(false);
+      const onAction = React.useCallback(async () => {
+        if (reviewing || typeof sendReview !== 'function') return;
+        setReviewing(true);
+        try {
+          const resp = await fetch(diffUrl(sessionId), { headers: { accept: 'application/json' }, cache: 'no-store' });
+          if (!resp.ok) return;
+          const diff = await resp.json();
+          if (diff.kind !== 'diff') return;
+          const message = buildReviewMessage(diff, t);
+          await sendReview(message);
+        } catch {
+          /* silently fail — user can retry */
+        } finally {
+          setReviewing(false);
+        }
+      }, [sessionId, sendReview, reviewing, t]);
+
+      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing });
     }
 
     return {
@@ -2055,6 +2134,11 @@ body[data-ds-dark-theme] .gcf-dock {
                     binding === undefined
                       ? null
                       : binding.session.projections.faceOf(PROJECTION_KEY),
+                  // sendReview: inject a user message into this session so the
+                  // LLM can review the staged diff before committing.
+                  sendReview: binding === undefined
+                    ? null
+                    : (text) => binding.session.prompt([{ type: 'text', text }], 'queue'),
                 };
               },
             },

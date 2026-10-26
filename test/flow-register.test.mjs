@@ -72,7 +72,10 @@ function harness({ readStatus, agents, connection, runGit, approval, discover, p
     ctx.connection = {
       fetch: {
         register(spec) {
-          captured.route = spec;
+          // Store by path so status and diff routes don't overwrite each other.
+          if (spec.path === '/api/git-flow.status') captured.route = spec;
+          else if (spec.path === '/api/git-flow.diff') captured.diffRoute = spec;
+          else captured.route = spec;
           return () => {};
         },
       },
@@ -102,10 +105,11 @@ function harness({ readStatus, agents, connection, runGit, approval, discover, p
 
 test('registers the projection, the tool and the command as effects', () => {
   const { captured, effects } = harness();
-  assert.equal(effects.length, 4);
+  assert.equal(effects.length, 5);
   assert.deepEqual(effects, [
     'git-control-flow: projection',
     'git-control-flow: status route',
+    'git-control-flow: diff route',
     'git-control-flow: git_flow tool',
     'git-control-flow: /git-flow command',
   ]);
@@ -116,7 +120,7 @@ test('registers the projection, the tool and the command as effects', () => {
 
 test('the tool declares one read and five approval-gated writes', () => {
   const { captured } = harness();
-  assert.deepEqual(captured.tool.parameters.action.enum, ['status', 'stage', 'commit', 'merge', 'abort', 'resolve']);
+  assert.deepEqual(captured.tool.parameters.action.enum, ['status', 'diff', 'stage', 'commit', 'merge', 'abort', 'resolve']);
   assert.equal(captured.tool.parameters.action.required, true);
   assert.deepEqual(captured.tool.output.schema, { type: 'json' });
 });
