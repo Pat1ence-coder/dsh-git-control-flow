@@ -114,9 +114,9 @@ test('registers the projection, the tool and the command as effects', () => {
   assert.equal(captured.command.name, 'git-flow');
 });
 
-test('the tool declares one read and two approval-gated writes', () => {
+test('the tool declares one read and five approval-gated writes', () => {
   const { captured } = harness();
-  assert.deepEqual(captured.tool.parameters.action.enum, ['status', 'stage', 'commit']);
+  assert.deepEqual(captured.tool.parameters.action.enum, ['status', 'stage', 'commit', 'merge', 'abort', 'resolve']);
   assert.equal(captured.tool.parameters.action.required, true);
   assert.deepEqual(captured.tool.output.schema, { type: 'json' });
 });

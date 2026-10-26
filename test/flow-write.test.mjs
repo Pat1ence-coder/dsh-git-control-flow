@@ -11,9 +11,16 @@ import {
   commitArgv,
   commitReason,
   normalizeMessage,
+  normalizeBranch,
   normalizePaths,
   stageArgv,
   stageReason,
+  mergeArgv,
+  mergeReason,
+  abortArgv,
+  abortReason,
+  continueArgv,
+  resolveReason,
 } from '../lib/flow/write.mjs';
 
 function snapshot(overrides = {}) {
@@ -225,4 +232,147 @@ test('an invalid message fails before any approval is requested', async () => {
   const captured = harness({ approval: 'allowed-once' });
   await assert.rejects(captured.tool.execute({ action: 'commit', message: '  ' }, exec), /must not be empty/);
   assert.equal(captured.approvals.length, 0);
+});
+
+// ── merge ──────────────────────────────────────────────────────────────────
+
+test('branch names are validated before reaching git', () => {
+  assert.deepEqual(normalizeBranch('feat/x'), { ok: true, branch: 'feat/x' });
+  assert.equal(normalizeBranch('').ok, false);
+  assert.equal(normalizeBranch('  ').ok, false);
+  assert.equal(normalizeBranch('-x').ok, false);
+  assert.equal(normalizeBranch('a..b').ok, false);
+  assert.equal(normalizeBranch('a\0b').ok, false);
+  assert.equal(normalizeBranch(42).ok, false);
+});
+
+test('merge approval reason names both branches', () => {
+  const reason = mergeReason({ sourceBranch: 'feat/x', targetBranch: 'main' });
+  assert.match(reason, /Merge branch "feat\/x" into "main"/);
+});
+
+test('merge argv is safe', () => {
+  assert.deepEqual(mergeArgv('feat/x'), ['merge', '--no-edit', '--', 'feat/x']);
+});
+
+test('merge asks for approval and runs git merge', async () => {
+  const captured = harness({ approval: 'allowed-once' });
+  const value = await captured.tool.execute({ action: 'merge', branch: 'feat/x' }, exec);
+
+  assert.equal(captured.approvals.length, 1);
+  assert.match(captured.approvals[0].reason, /Merge branch "feat\/x"/);
+  assert.deepEqual(captured.git[0].argv, ['merge', '--no-edit', '--', 'feat/x']);
+  assert.equal(value.kind, 'git-status');
+});
+
+test('merge is blocked when an operation is already in progress', async () => {
+  const captured = harness({
+    approval: 'allowed-once',
+    statuses: [snapshot({ operation: 'rebase' })],
+  });
+  const value = await captured.tool.execute({ action: 'merge', branch: 'feat/x' }, exec);
+  assert.equal(value.kind, 'error');
+  assert.match(value.message, /rebase is already in progress/);
+  assert.equal(captured.git.length, 0);
+});
+
+test('a rejected merge changes nothing', async () => {
+  const captured = harness({ approval: 'rejected' });
+  const value = await captured.tool.execute({ action: 'merge', branch: 'feat/x' }, exec);
+  assert.equal(value.kind, 'rejected');
+  assert.equal(captured.git.length, 0);
+});
+
+// ── abort ──────────────────────────────────────────────────────────────────
+
+test('abort argv covers merge and rebase', () => {
+  assert.deepEqual(abortArgv('merge'), ['merge', '--abort']);
+  assert.deepEqual(abortArgv('rebase'), ['rebase', '--abort']);
+  assert.deepEqual(abortArgv('cherry-pick'), ['cherry-pick', '--abort']);
+});
+
+test('abort approval reason names the operation and warns about reset', () => {
+  const reason = abortReason({ operation: 'merge', branch: 'main' });
+  assert.match(reason, /Abort the in-progress merge on main/);
+  assert.match(reason, /reset to before/);
+});
+
+test('abort asks for approval and runs the abort command', async () => {
+  const captured = harness({
+    approval: 'allowed-once',
+    statuses: [snapshot({ operation: 'merge' }), snapshot()],
+  });
+  const value = await captured.tool.execute({ action: 'abort' }, exec);
+
+  assert.equal(captured.approvals.length, 1);
+  assert.match(captured.approvals[0].reason, /Abort the in-progress merge/);
+  assert.deepEqual(captured.git[0].argv, ['merge', '--abort']);
+  assert.equal(value.kind, 'git-status');
+});
+
+test('abort with no operation in progress returns nothing-to-abort', async () => {
+  const captured = harness({ approval: 'allowed-once', statuses: [snapshot()] });
+  const value = await captured.tool.execute({ action: 'abort' }, exec);
+  assert.equal(value.kind, 'nothing-to-abort');
+  assert.equal(captured.approvals.length, 0);
+  assert.equal(captured.git.length, 0);
+});
+
+// ── resolve ────────────────────────────────────────────────────────────────
+
+test('resolve approval reason names the operation and the resolved files', () => {
+  const reason = resolveReason({ operation: 'merge', branch: 'main', paths: ['src/a.ts'] });
+  assert.match(reason, /Mark 1 conflict file\(s\) as resolved/);
+  assert.match(reason, /continue the merge/);
+  assert.match(reason, /src\/a\.ts/);
+});
+
+test('continue argv covers merge and rebase', () => {
+  assert.deepEqual(continueArgv('merge'), ['merge', '--continue', '--no-edit']);
+  assert.deepEqual(continueArgv('rebase'), ['rebase', '--continue', '--no-edit']);
+});
+
+test('resolve stages the paths and continues the operation', async () => {
+  const captured = harness({
+    approval: 'allowed-once',
+    statuses: [
+      snapshot({ operation: 'merge', counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 1, working: 1 } }),
+      snapshot(),
+    ],
+  });
+  const value = await captured.tool.execute({ action: 'resolve', paths: ['src/a.ts'] }, exec);
+
+  assert.equal(captured.approvals.length, 1);
+  assert.match(captured.approvals[0].reason, /Mark 1 conflict file/);
+  assert.equal(captured.git.length, 2);
+  assert.deepEqual(captured.git[0].argv, ['add', '--', 'src/a.ts']);
+  assert.deepEqual(captured.git[1].argv, ['merge', '--continue', '--no-edit']);
+  assert.equal(value.kind, 'git-status');
+});
+
+test('resolve with no operation returns nothing-to-resolve', async () => {
+  const captured = harness({ approval: 'allowed-once', statuses: [snapshot()] });
+  const value = await captured.tool.execute({ action: 'resolve', paths: ['src/a.ts'] }, exec);
+  assert.equal(value.kind, 'nothing-to-resolve');
+  assert.equal(captured.git.length, 0);
+});
+
+test('resolve with no conflicts returns no-conflicts', async () => {
+  const captured = harness({
+    approval: 'allowed-once',
+    statuses: [snapshot({ operation: 'merge' })],
+  });
+  const value = await captured.tool.execute({ action: 'resolve', paths: ['src/a.ts'] }, exec);
+  assert.equal(value.kind, 'no-conflicts');
+  assert.equal(captured.git.length, 0);
+});
+
+test('a rejected resolve changes nothing', async () => {
+  const captured = harness({
+    approval: 'rejected',
+    statuses: [snapshot({ operation: 'merge', counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 1, working: 1 } })],
+  });
+  const value = await captured.tool.execute({ action: 'resolve', paths: ['src/a.ts'] }, exec);
+  assert.equal(value.kind, 'rejected');
+  assert.equal(captured.git.length, 0);
 });
