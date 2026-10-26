@@ -27,12 +27,14 @@ window.__ModuleLoader__.load({
     const POLL_MS = 6000;
 
     /** Same-origin URL for the Host status route; the session id is the only input. */
-    function statusUrl(sessionId) {
-      return new URL(`${STATUS_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`, document.baseURI).toString();
+    function statusUrl(sessionId, repo) {
+      const base = `${STATUS_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`;
+      return new URL(repo ? `${base}&repo=${encodeURIComponent(repo)}` : base, document.baseURI).toString();
     }
 
-    function diffUrl(sessionId) {
-      return new URL(`${DIFF_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`, document.baseURI).toString();
+    function diffUrl(sessionId, repo) {
+      const base = `${DIFF_ROUTE}?sessionId=${encodeURIComponent(sessionId)}`;
+      return new URL(repo ? `${base}&repo=${encodeURIComponent(repo)}` : base, document.baseURI).toString();
     }
 
     /** Build the user-visible review request message injected into the session. */
@@ -134,14 +136,28 @@ window.__ModuleLoader__.load({
     }
 
     /** Header: title (+ reserved PR number) and one state pill, as in the reference. */
-    function CardHeader({ view, t, collapsed, onToggle, scrambleStatus }) {
+    function CardHeader({ view, t, collapsed, onToggle, scrambleStatus, onBack, repoName }) {
       const pr = view.pr ?? null;
       const title = pr !== null && typeof pr.title === 'string' ? pr.title : branchText(view, t);
       const number = pr !== null && Number.isInteger(pr.number) ? `#${pr.number}` : null;
       const state = stateText(view, t);
       return h(
         'header',
-        { className: 'gcf-head' },
+        { className: `gcf-head${onBack ? ' has-back' : ''}` },
+        onBack
+          ? h(
+              'button',
+              {
+                className: 'gcf-back-btn',
+                type: 'button',
+                onClick: onBack,
+                title: t('nav.back'),
+                'aria-label': t('nav.back'),
+              },
+              h(BackGlyph),
+              repoName ? h('span', null, repoName) : null,
+            )
+          : null,
         h('span', { className: 'gcf-title', title }, title),
         number === null ? null : h('span', { className: 'gcf-prnum' }, number),
         h(
@@ -792,6 +808,26 @@ window.__ModuleLoader__.load({
   animation-delay: calc(var(--rev, 0) * 45ms + 120ms);
 }
 .gcf-repo-row:hover { background: var(--dsw-alias-bg-layer-2, #f6f6f6); }
+.gcf-repo-row[role='button'] { cursor: pointer; }
+.gcf-repo-row[role='button']:focus-visible { outline: 2px solid var(--dsw-alias-state-focus-primary, #0071e3); outline-offset: -2px; }
+.gcf-repo-row[role='button']:active { background: var(--dsw-alias-bg-layer-3, #ebebeb); }
+.gcf-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+  flex: none;
+}
+.gcf-back-btn:hover { color: var(--dsw-alias-label-primary, #1d1d1f); }
+.gcf-back-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-focus-primary, #0071e3); border-radius: 3px; }
+.gcf-back-btn svg { width: 12px; height: 12px; }
+.gcf-head.has-back { gap: 6px; }
 .gcf-repo-name {
   min-width: 0;
   flex: 1;
@@ -1119,6 +1155,7 @@ body[data-ds-dark-theme] .gcf-dock {
       'row.files': '{n} 个文件',
       'rows.more': '还有 {n} 条提交',
       'repos.title': '{n} 个 Git 仓库',
+      'nav.back': '返回',
       'branch.detachedShort': '游离 HEAD',
       'foot.staged': '暂存 {n}',
       'foot.unstaged': '未暂存 {n}',
@@ -1169,6 +1206,7 @@ body[data-ds-dark-theme] .gcf-dock {
       'row.files': '{n} files',
       'rows.more': '{n} more commits',
       'repos.title': '{n} Git repositories',
+      'nav.back': 'Back',
       'branch.detachedShort': 'detached HEAD',
       'foot.staged': 'staged {n}',
       'foot.unstaged': 'unstaged {n}',
@@ -1265,6 +1303,26 @@ body[data-ds-dark-theme] .gcf-dock {
     }
 
     /** Branch glyph: one trunk with a forked commit, drawn for this plugin. */
+    /** Left-chevron used by the back button. */
+    function BackGlyph() {
+      return h(
+        'svg',
+        {
+          width: 12,
+          height: 12,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          focusable: false,
+        },
+        h('path', { d: 'M10 3 5 8l5 5' }),
+      );
+    }
+
     function BranchGlyph() {
       return h(
         'svg',
@@ -1820,7 +1878,7 @@ body[data-ds-dark-theme] .gcf-dock {
       return h('div', { className: 'gcf-chips', 'data-gcf': 'chips' }, chips);
     }
 
-    function RepositoryList({ repositories, t, collapsed = false, onToggle, pending }) {
+    function RepositoryList({ repositories, t, collapsed = false, onToggle, pending, onSelectRepo }) {
       const bodyRef = useBodyRef(collapsed);
       return h(
         'div',
@@ -1858,7 +1916,13 @@ body[data-ds-dark-theme] .gcf-dock {
                         key: repo.name,
                         className: 'gcf-repo-row',
                         'data-gcf': 'repo',
+                        role: typeof onSelectRepo === 'function' ? 'button' : undefined,
+                        tabIndex: typeof onSelectRepo === 'function' ? 0 : undefined,
                         style: { '--gcf-i': String(index) },
+                        onClick: typeof onSelectRepo === 'function' ? () => onSelectRepo(repo.name) : undefined,
+                        onKeyDown: typeof onSelectRepo === 'function'
+                          ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectRepo(repo.name); } }
+                          : undefined,
                       },
                       h('span', { className: 'gcf-repo-name' }, repo.name),
                       h('span', { className: 'gcf-repo-branch' }, repo.detached ? t('branch.detachedShort') : repo.branch ?? t('branch.unknown')),
@@ -1877,11 +1941,11 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false }) {
+    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false, onSelectRepo, onBack, selectedRepo }) {
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') {
         if (Array.isArray(view.repositories) && view.repositories.length > 0) {
-          return h(RepositoryList, { repositories: view.repositories, t, collapsed, onToggle, pending: view.pending });
+          return h(RepositoryList, { repositories: view.repositories, t, collapsed, onToggle, pending: view.pending, onSelectRepo });
         }
         if (view.pending !== null && view.pending !== undefined) {
           return h(
@@ -1923,7 +1987,7 @@ body[data-ds-dark-theme] .gcf-dock {
                 'data-phase': view.phase,
                 'aria-label': t('app.title'),
               },
-              h(CardHeader, { view, t, collapsed, onToggle, scrambleStatus: true }),
+              h(CardHeader, { view, t, collapsed, onToggle, scrambleStatus: true, onBack, repoName: selectedRepo }),
               h(PendingLine, { pending: view.pending, t }),
               h(
                 'div',
@@ -2023,6 +2087,10 @@ body[data-ds-dark-theme] .gcf-dock {
       );
       const projected = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
+      // selectedRepo: name of the sub-repository the user drilled into, or null
+      // for the container-level list.
+      const [selectedRepo, setSelectedRepo] = React.useState(null);
+
       // Live status: the card reflects the repository now, not only after a
       // tool call. The projection stays as the fallback (and as the audit
       // trail of what the model saw).
@@ -2035,7 +2103,7 @@ body[data-ds-dark-theme] .gcf-dock {
         const load = async () => {
           if (typeof document !== 'undefined' && document.hidden === true) return;
           try {
-            const response = await fetch(statusUrl(sessionId), {
+            const response = await fetch(statusUrl(sessionId, selectedRepo), {
               headers: { accept: 'application/json' },
               cache: 'no-store',
             });
@@ -2059,7 +2127,7 @@ body[data-ds-dark-theme] .gcf-dock {
           clearInterval(timer);
           window.removeEventListener('focus', onFocus);
         };
-      }, [sessionId]);
+      }, [sessionId, selectedRepo]);
 
       const [collapsed, setCollapsed] = React.useState(() => readCollapsed(sessionId));
       React.useEffect(() => {
@@ -2073,6 +2141,16 @@ body[data-ds-dark-theme] .gcf-dock {
         setCollapsed((value) => !value);
       }, []);
 
+      const onSelectRepo = React.useCallback((name) => {
+        setSelectedRepo(name);
+        setLive(null);
+      }, []);
+
+      const onBack = React.useCallback(() => {
+        setSelectedRepo(null);
+        setLive(null);
+      }, []);
+
       const view = live ?? projected;
 
       // onAction: handles the primary button click (commit / resolve).
@@ -2083,7 +2161,7 @@ body[data-ds-dark-theme] .gcf-dock {
         if (reviewing || typeof sendReview !== 'function') return;
         setReviewing(true);
         try {
-          const resp = await fetch(diffUrl(sessionId), { headers: { accept: 'application/json' }, cache: 'no-store' });
+          const resp = await fetch(diffUrl(sessionId, selectedRepo), { headers: { accept: 'application/json' }, cache: 'no-store' });
           if (!resp.ok) return;
           const diff = await resp.json();
           if (diff.kind !== 'diff') return;
@@ -2094,9 +2172,9 @@ body[data-ds-dark-theme] .gcf-dock {
         } finally {
           setReviewing(false);
         }
-      }, [sessionId, sendReview, reviewing, t]);
+      }, [sessionId, selectedRepo, sendReview, reviewing, t]);
 
-      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing });
+      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing, onSelectRepo, onBack, selectedRepo });
     }
 
     return {

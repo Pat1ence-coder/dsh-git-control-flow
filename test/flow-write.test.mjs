@@ -13,6 +13,7 @@ import {
   normalizeMessage,
   normalizeBranch,
   normalizePaths,
+  normalizeRepo,
   stageArgv,
   stageReason,
   mergeArgv,
@@ -448,4 +449,47 @@ test('diff reports missing author fields as null', async () => {
   const value = await captured.tool.execute({ action: 'diff' }, exec);
   assert.equal(value.author.name, null);
   assert.equal(value.author.email, null);
+});
+
+// ── normalizeRepo ────────────────────────────────────────────────────────────
+
+test('normalizeRepo: undefined/null returns ok with null repo', () => {
+  assert.deepEqual(normalizeRepo(undefined), { ok: true, repo: null });
+  assert.deepEqual(normalizeRepo(null), { ok: true, repo: null });
+});
+
+test('normalizeRepo: plain name or relative path is accepted', () => {
+  assert.deepEqual(normalizeRepo('alpha'), { ok: true, repo: 'alpha' });
+  assert.deepEqual(normalizeRepo('sub/alpha'), { ok: true, repo: 'sub/alpha' });
+});
+
+test('normalizeRepo: rejects non-string', () => {
+  assert.equal(normalizeRepo(42).ok, false);
+  assert.match(normalizeRepo(42).reason, /string/);
+});
+
+test('normalizeRepo: rejects empty string', () => {
+  assert.equal(normalizeRepo('').ok, false);
+  assert.match(normalizeRepo('').reason, /empty/);
+  assert.equal(normalizeRepo('   ').ok, false);
+});
+
+test('normalizeRepo: rejects NUL byte', () => {
+  assert.equal(normalizeRepo('foo\0bar').ok, false);
+  assert.match(normalizeRepo('foo\0bar').reason, /NUL/);
+});
+
+test('normalizeRepo: rejects leading hyphen', () => {
+  assert.equal(normalizeRepo('-opt').ok, false);
+  assert.match(normalizeRepo('-opt').reason, /"-"/);
+});
+
+test('normalizeRepo: rejects absolute paths', () => {
+  assert.equal(normalizeRepo('/absolute').ok, false);
+  assert.match(normalizeRepo('/absolute').reason, /relative/);
+});
+
+test('normalizeRepo: rejects parent traversal', () => {
+  assert.equal(normalizeRepo('foo/../../../etc').ok, false);
+  assert.match(normalizeRepo('foo/../../../etc').reason, /escape/);
 });

@@ -333,3 +333,74 @@ test('the tool reports discovered repositories instead of a bare not-a-repositor
   assert.equal(value.repositories.length, 1);
   assert.equal(value.repositories[0].name, 'alpha');
 });
+
+// ── sub-repo routing ─────────────────────────────────────────────────────────
+
+test('status with repo param resolves to the sub-directory', async () => {
+  const { captured, calls } = harness();
+  const signal = new AbortController().signal;
+  await captured.tool.execute(
+    { action: 'status', repo: 'alpha' },
+    { agent: { session: { cwd: '/container' } }, signal },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].directory, '/container/alpha');
+});
+
+test('status with multi-segment repo resolves correctly', async () => {
+  const { captured, calls } = harness();
+  const signal = new AbortController().signal;
+  await captured.tool.execute(
+    { action: 'status', repo: 'sub/alpha' },
+    { agent: { session: { cwd: '/container' } }, signal },
+  );
+  assert.equal(calls[0].directory, '/container/sub/alpha');
+});
+
+test('status without repo uses session directory', async () => {
+  const { captured, calls } = harness();
+  const signal = new AbortController().signal;
+  await captured.tool.execute(
+    { action: 'status' },
+    { agent: { session: { cwd: '/sessions/repo' } }, signal },
+  );
+  assert.equal(calls[0].directory, '/sessions/repo');
+});
+
+test('write action with repo param targets the sub-directory', async () => {
+  const gitCalls = [];
+  const { captured } = harness({
+    readStatus: async (directory) =>
+      snapshot({ root: directory, staged: { count: 1, files: [] }, counts: { staged: 1, unstaged: 0, untracked: 0, conflicts: 0, working: 1 } }),
+    runGit: async (cwd, argv) => { gitCalls.push({ cwd, argv }); return { code: 0, stdout: '', stderr: '' }; },
+    approval: { request: async () => 'allowed-once' },
+  });
+  const signal = new AbortController().signal;
+  await captured.tool.execute(
+    { action: 'commit', repo: 'alpha', message: 'fix: something' },
+    { agent: { session: { cwd: '/container' } }, callId: 'c1', signal },
+  );
+  // Git must have been run against the sub-repo's root.
+  const commitCall = gitCalls.find((c) => c.argv[0] === 'commit');
+  assert.ok(commitCall, 'expected a commit git call');
+  assert.equal(commitCall.cwd, '/container/alpha');
+});
+
+test('invalid repo value throws before touching the filesystem', async () => {
+  const { captured } = harness();
+  const signal = new AbortController().signal;
+  await assert.rejects(
+    captured.tool.execute(
+      { action: 'status', repo: '/absolute' },
+      { agent: { session: { cwd: '/container' } }, signal },
+    ),
+    /relative/,
+  );
+  await assert.rejects(
+    captured.tool.execute(
+      { action: 'status', repo: 'foo/../../../etc' },
+      { agent: { session: { cwd: '/container' } }, signal },
+    ),
+    /escape/,
+  );
+});
