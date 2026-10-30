@@ -404,3 +404,35 @@ test('invalid repo value throws before touching the filesystem', async () => {
     /escape/,
   );
 });
+
+test('the diff route reads the selected sub-repository and returns conflicts', async () => {
+  const read = [];
+  const { captured } = harness({
+    readStatus: async (directory) => {
+      read.push(directory);
+      return snapshot({
+        root: directory,
+        operation: 'merge',
+        conflicts: { count: 1, files: [{ path: 'a.ts', code: 'UU', kind: 'conflict' }] },
+        counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 1, working: 1 },
+        clean: false,
+      });
+    },
+    runGit: async (_cwd, argv) => ({ code: 0, stdout: argv[0] === 'diff' ? '++<<<<<<< HEAD\n' : '', stderr: '' }),
+    agents: { get: () => ({ session: { cwd: '/container' } }) },
+    connection: {},
+  });
+
+  const response = await captured.diffRoute.fetch(
+    new Request('http://local/api/git-flow.diff?sessionId=s&repo=alpha'),
+  );
+  const body = await response.json();
+  assert.deepEqual(read, ['/container/alpha']);
+  assert.equal(body.kind, 'conflicts');
+  assert.deepEqual(body.files, ['a.ts']);
+
+  const escaped = await captured.diffRoute.fetch(
+    new Request('http://local/api/git-flow.diff?sessionId=s&repo=../outside'),
+  );
+  assert.equal(escaped.status, 400);
+});

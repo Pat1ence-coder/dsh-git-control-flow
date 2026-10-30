@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
     const DIFF_ROUTE = 'api/git-flow.diff';
     const STATUS_ROUTE = 'api/git-flow.status';
     const POLL_MS = 6000;
+    /** How long a footer notice (e.g. "nothing to commit") stays visible. */
+    const NOTICE_MS = 4000;
 
     /** Same-origin URL for the Host status route; the session id is the only input. */
     function statusUrl(sessionId, repo) {
@@ -37,47 +39,91 @@ window.__ModuleLoader__.load({
       return new URL(repo ? `${base}&repo=${encodeURIComponent(repo)}` : base, document.baseURI).toString();
     }
 
-    /** Build the user-visible review request message injected into the session. */
-    function buildReviewMessage(diff, t) {
-      const lines = [];
+    /**
+     * Build the user-visible review request injected into the session. The
+     * text depends on the payload: resolve conflicts, commit staged work, or
+     * stage-then-commit working changes. `repo` names the sub-repository the
+     * card is drilled into, so the model passes it back to `git_flow`.
+     */
+    function buildReviewMessage(payload, repo) {
       const lang = document.documentElement.lang || 'zh';
-      const isChinese = lang.startsWith('zh');
+      const zh = lang.startsWith('zh');
+      const lines = [];
+      const fence = (body, info = '') => {
+        lines.push('', '```' + info, body, '```');
+      };
 
-      if (isChinese) {
-        lines.push('请帮我 review 以下暂存的改动，检查是否有敏感信息或风险，然后生成合适的 commit message 并提交。');
+      if (payload.kind === 'conflicts') {
+        const op = payload.operation ?? 'merge';
+        if (zh) {
+          lines.push(`请帮我解决当前 ${op} 中的冲突：`);
+          lines.push('1. 阅读下面的冲突内容，判断每个文件该保留哪一侧或如何合并两侧，有拿不准的地方先问我；');
+          lines.push('2. 编辑这些文件，去掉全部冲突标记（<<<<<<< / ======= / >>>>>>>）；');
+          lines.push('3. 检查合并结果里没有敏感信息或明显风险；');
+          lines.push('4. 调用 git_flow 的 resolve 动作，paths 填已解决的文件（会弹出审批）。');
+        } else {
+          lines.push(`Please help me resolve the conflicts in the current ${op}:`);
+          lines.push('1. Read the conflicts below and decide, per file, which side to keep or how to combine them — ask me if anything is unclear;');
+          lines.push('2. Edit the files to remove every conflict marker (<<<<<<< / ======= / >>>>>>>);');
+          lines.push('3. Check the merged result for sensitive information or obvious risks;');
+          lines.push('4. Call git_flow with action "resolve" and the resolved files as paths (this asks for approval).');
+        }
+      } else if (payload.scope === 'working') {
+        lines.push(zh
+          ? '请帮我 review 下面尚未暂存的改动和未跟踪文件，检查是否有敏感信息或风险。确认后用 git_flow 的 stage 暂存应该提交的文件（不该提交的请列出并说明原因），再生成合适的 commit message 并 commit。'
+          : 'Please review the unstaged changes and untracked files below for sensitive information or risks. Then stage what should be committed with git_flow "stage" (list anything that should not be committed, and why), write an appropriate commit message and commit.');
       } else {
-        lines.push('Please review the following staged changes, check for any sensitive information or risks, then generate an appropriate commit message and commit.');
+        lines.push(zh
+          ? '请帮我 review 以下暂存的改动，检查是否有敏感信息或风险，然后生成合适的 commit message 并提交。'
+          : 'Please review the following staged changes, check for any sensitive information or risks, then generate an appropriate commit message and commit.');
       }
 
-      if (diff.author.name === null || diff.author.email === null) {
-        lines.push('');
-        lines.push(isChinese
+      lines.push('');
+      lines.push(zh
+        ? '要求：commit message 不得包含密钥、令牌、内部地址或个人信息；不要 push。'
+        : 'Rules: the commit message must not contain keys, tokens, internal addresses or personal information; do not push.');
+      if (payload.author && (payload.author.name === null || payload.author.email === null)) {
+        lines.push(zh
           ? '⚠️ 注意：git config 中未配置 user.name 或 user.email，提交前请先询问我。'
           : '⚠️ Note: git config user.name or user.email is not set. Please ask me for these before committing.');
       }
 
       lines.push('');
-      lines.push(isChinese ? `分支：${diff.branch}，已暂存 ${diff.stagedCount} 个文件` : `Branch: ${diff.branch}, ${diff.stagedCount} staged file(s)`);
-
-      if (diff.stat) {
-        lines.push('');
-        lines.push('```');
-        lines.push(diff.stat);
-        lines.push('```');
+      if (typeof repo === 'string' && repo !== '') {
+        lines.push(zh
+          ? `仓库：${repo}（调用 git_flow 时请传 repo: "${repo}"）`
+          : `Repository: ${repo} (pass repo: "${repo}" to git_flow)`);
+      }
+      const branch = payload.branch ?? (zh ? '游离 HEAD' : 'detached HEAD');
+      if (payload.kind === 'conflicts') {
+        lines.push(zh
+          ? `分支：${branch}，${payload.conflictCount} 个冲突文件`
+          : `Branch: ${branch}, ${payload.conflictCount} conflicted file(s)`);
+        const more = payload.moreFiles > 0 ? [zh ? `… 另有 ${payload.moreFiles} 个` : `… ${payload.moreFiles} more`] : [];
+        fence([...payload.files, ...more].join('\n'));
+      } else if (payload.scope === 'working') {
+        lines.push(zh
+          ? `分支：${branch}，${payload.workingCount} 个文件有改动（尚未暂存）`
+          : `Branch: ${branch}, ${payload.workingCount} changed file(s) (nothing staged yet)`);
+        if (payload.stat) fence(payload.stat);
+        if (payload.untracked.length > 0) {
+          lines.push('', zh ? '**未跟踪文件：**' : '**Untracked files:**');
+          const more = payload.moreUntracked > 0 ? [zh ? `… 另有 ${payload.moreUntracked} 个` : `… ${payload.moreUntracked} more`] : [];
+          fence([...payload.untracked, ...more].join('\n'));
+        }
+      } else {
+        lines.push(zh
+          ? `分支：${branch}，已暂存 ${payload.stagedCount} 个文件`
+          : `Branch: ${branch}, ${payload.stagedCount} staged file(s)`);
+        if (payload.stat) fence(payload.stat);
       }
 
-      if (diff.patch) {
-        lines.push('');
-        lines.push(isChinese ? '**改动内容（已过滤敏感信息）：**' : '**Diff (sensitive lines redacted):**');
-        lines.push('');
-        lines.push('```diff');
-        lines.push(diff.patch);
-        lines.push('```');
+      if (payload.patch) {
+        lines.push('', zh ? '**改动内容（已过滤疑似敏感行）：**' : '**Diff (secret-looking lines redacted):**');
+        fence(payload.patch, 'diff');
       }
-
-      if (diff.truncated) {
-        lines.push('');
-        lines.push(isChinese ? '_（diff 过大，已截断）_' : '_(diff truncated — too large)_');
+      if (payload.truncated) {
+        lines.push('', zh ? '_（diff 过大，已截断）_' : '_(diff truncated — too large)_');
       }
 
       return lines.join('\n');
@@ -794,6 +840,15 @@ window.__ModuleLoader__.load({
 }
 .gcf-foot-state.is-conflicts { color: var(--dsw-alias-state-error-primary, #c0394b); }
 .gcf-foot-state.is-clean { color: var(--dsw-alias-state-success-primary, #2e8f55); }
+.gcf-foot-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-secondary, #5e5e5e);
+  animation: gcf-row-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 .gcf-card[data-gcf='repositories'] .gcf-rows { padding: 2px 6px 6px; }
 .gcf-repo-row {
   display: flex;
@@ -1129,6 +1184,90 @@ body[data-ds-dark-theme] .gcf-dock {
 }
 .gcf-conflict-list .gcf-badge { position: absolute; left: 2px; top: 7px; margin: 0; }
 
+/* Conflict peek popover ---------------------------------------------------- */
+.gcf-conflict-peek {
+  position: relative;
+  display: contents;
+}
+.gcf-peek-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 340px;
+  max-width: min(480px, calc(100cqw - 32px));
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  border: 1px solid var(--dsw-alias-border-l1, #ececec);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.12), 0 2px 6px rgba(16, 24, 40, 0.06);
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+.gcf-row--conflict:hover .gcf-peek-popover,
+.gcf-row--conflict:focus-within .gcf-peek-popover {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.gcf-peek-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary, #5e5e5e);
+  border-bottom: 1px solid var(--dsw-alias-border-l1, #ececec);
+}
+.gcf-peek-header span { font-weight: 400; color: var(--dsw-alias-label-tertiary, #8a8a8a); margin-left: 6px; }
+.gcf-peek-hunk {
+  padding: 6px 0;
+}
+.gcf-peek-line {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 12px 3px 10px;
+  border-left: 3px solid transparent;
+}
+.gcf-peek-line.is-ours { border-color: var(--warn, #e3a21a); background: rgba(227, 162, 26, 0.06); }
+.gcf-peek-line.is-theirs { border-color: var(--blue, #4a7fdc); background: rgba(74, 127, 220, 0.05); }
+.gcf-peek-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+}
+.gcf-peek-line.is-ours .gcf-peek-label { color: var(--warn-ink, #b5682b); }
+.gcf-peek-line.is-theirs .gcf-peek-label { color: var(--blue, #4a7fdc); }
+.gcf-peek-code {
+  font: 11px/1.5 var(--dsh-mono-font, "SFMono-Regular", Menlo, Consolas, monospace);
+  color: var(--dsw-alias-label-primary, #1d1d1f);
+  overflow-x: auto;
+  white-space: pre;
+  scrollbar-width: none;
+}
+.gcf-peek-empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+  font-style: italic;
+}
+/* keep popover on screen: flip up if near left edge of card */
+.gcf-conflict-list > *:nth-last-child(1) .gcf-peek-popover,
+.gcf-conflict-list > *:nth-last-child(2) .gcf-peek-popover {
+  left: auto;
+  right: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gcf-peek-popover { transition: none; }
+}
+
   flex: none;
   font-size: 13px;
   font-weight: 500;
@@ -1156,6 +1295,13 @@ body[data-ds-dark-theme] .gcf-dock {
       'rows.more': '还有 {n} 条提交',
       'repos.title': '{n} 个 Git 仓库',
       'nav.back': '返回',
+      'notice.clean': '没有可提交的改动',
+      'notice.failed': '读取改动失败，请重试',
+      'notice.unavailable': '当前会话无法发送 review 消息',
+      'conflict.ours': '当前 (HEAD)',
+      'conflict.theirs': '传入',
+      'conflict.peekEmpty': '无法预览：没有标准冲突块',
+      'conflict.moreHunks': '还有 {n} 处冲突块',
       'branch.detachedShort': '游离 HEAD',
       'foot.staged': '暂存 {n}',
       'foot.unstaged': '未暂存 {n}',
@@ -1207,6 +1353,13 @@ body[data-ds-dark-theme] .gcf-dock {
       'rows.more': '{n} more commits',
       'repos.title': '{n} Git repositories',
       'nav.back': 'Back',
+      'notice.clean': 'Nothing to commit',
+      'notice.failed': 'Could not read the changes — try again',
+      'notice.unavailable': 'This session cannot send a review message',
+      'conflict.ours': 'Current (HEAD)',
+      'conflict.theirs': 'Incoming',
+      'conflict.peekEmpty': 'No standard conflict markers found',
+      'conflict.moreHunks': '{n} more conflict hunk(s)',
       'branch.detachedShort': 'detached HEAD',
       'foot.staged': 'staged {n}',
       'foot.unstaged': 'unstaged {n}',
@@ -1303,6 +1456,86 @@ body[data-ds-dark-theme] .gcf-dock {
     }
 
     /** Branch glyph: one trunk with a forked commit, drawn for this plugin. */
+    /**
+     * Parse a combined diff (with <<<<<</s/=======/>>>>>>>> markers) into a
+     * per-file map of { ours: string, theirs: string, label: string }[].
+     * Used by ConflictPeekPopover to render the hover preview without a
+     * separate request: the diff payload already contains the patch.
+     * Returns { [path]: hunk[] } where each hunk has one representative line
+     * per side (the first non-empty line from each side of the first block).
+     * @param {string} patch - raw diff text with conflict markers
+     * @returns {Record<string, { ours: string, theirs: string }[]>}
+     */
+    function parseConflictPeek(patch) {
+      const result = {};
+      let currentFile = null;
+      let inOurs = false;
+      let inTheirs = false;
+      let oursLines = [];
+      let theirsLines = [];
+
+      const push = () => {
+        if (currentFile === null) return;
+        const ours = oursLines.find((l) => l.trim() !== '') ?? '';
+        const theirs = theirsLines.find((l) => l.trim() !== '') ?? '';
+        if (ours === '' && theirs === '') { oursLines = []; theirsLines = []; return; }
+        if (!result[currentFile]) result[currentFile] = [];
+        result[currentFile].push({ ours, theirs });
+        oursLines = [];
+        theirsLines = [];
+      };
+
+      for (const line of patch.split('\n')) {
+        // New file in diff output.
+        const m = /^\+\+\+ b\/(.+)/.exec(line) ?? /^\+\+\+ (.+)/.exec(line);
+        if (m) {
+          push();
+          currentFile = m[1].replace(/\t.*$/, '').trim();
+          inOurs = false;
+          inTheirs = false;
+          continue;
+        }
+        // Combined diff: <<<<<<< HEAD or <<<<<<< label
+        if (/^[+ ]{0,2}<{7}/.test(line)) { push(); inOurs = true; inTheirs = false; continue; }
+        if (/^[+ ]{0,2}={7}\s*$/.test(line)) { inOurs = false; inTheirs = true; continue; }
+        if (/^[+ ]{0,2}>{7}/.test(line)) { push(); inOurs = false; inTheirs = false; continue; }
+        if (inOurs && currentFile !== null) oursLines.push(line.replace(/^[+ -]/, ''));
+        if (inTheirs && currentFile !== null) theirsLines.push(line.replace(/^[+ -]/, ''));
+      }
+      push();
+      return result;
+    }
+
+    /** Hover popover for one conflict file row: shows ours vs theirs. */
+    function ConflictPeekPopover({ hunks, t }) {
+      if (!hunks || hunks.length === 0) {
+        return h('div', { className: 'gcf-peek-popover' },
+          h('div', { className: 'gcf-peek-empty' }, t('conflict.peekEmpty')));
+      }
+      const h0 = hunks[0];
+      return h(
+        'div',
+        { className: 'gcf-peek-popover', role: 'tooltip' },
+        h(
+          'div',
+          { className: 'gcf-peek-hunk' },
+          h('div', { className: 'gcf-peek-line is-ours' },
+            h('span', { className: 'gcf-peek-label' }, t('conflict.ours')),
+            h('code', { className: 'gcf-peek-code' }, h0.ours || '（空）'),
+          ),
+          h('div', { className: 'gcf-peek-line is-theirs' },
+            h('span', { className: 'gcf-peek-label' }, t('conflict.theirs')),
+            h('code', { className: 'gcf-peek-code' }, h0.theirs || '（空）'),
+          ),
+        ),
+        hunks.length > 1
+          ? h('div', { className: 'gcf-peek-header' },
+              null,
+              h('span', null, t('conflict.moreHunks').replace('{n}', String(hunks.length - 1))))
+          : null,
+      );
+    }
+
     /** Left-chevron used by the back button. */
     function BackGlyph() {
       return h(
@@ -1941,7 +2174,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false, onSelectRepo, onBack, selectedRepo }) {
+    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false, notice = null, onSelectRepo, onBack, selectedRepo, conflictPeekHunks = null }) {
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') {
         if (Array.isArray(view.repositories) && view.repositories.length > 0) {
@@ -2011,11 +2244,16 @@ body[data-ds-dark-theme] .gcf-dock {
                               key: row.id,
                               className: 'gcf-row gcf-row--conflict',
                               'data-gcf': 'conflict-row',
+                              tabIndex: 0,
                               style: { '--gcf-i': String(index), '--rev': String(Math.max(0, conflictRows.length - 1 - index)) },
                             },
                             h('span', { className: 'gcf-badge', 'aria-hidden': true }, String(row.index)),
                             h('span', { className: 'gcf-subject' }, row.path),
                             h('span', { className: 'gcf-meta' }, h('code', null, row.code)),
+                            h(ConflictPeekPopover, {
+                              hunks: conflictPeekHunks ? (conflictPeekHunks[row.path] ?? null) : null,
+                              t,
+                            }),
                           ),
                         ),
                       )
@@ -2037,20 +2275,23 @@ body[data-ds-dark-theme] .gcf-dock {
                   h(
                     'footer',
                     { className: 'gcf-foot' },
-                    h(
-                      'span',
-                      { className: `gcf-foot-state is-${stateOf(view)}` },
-                      h('i', null),
-                      view.counts.conflicts > 0
-                        ? format(t, 'foot.conflicts', { n: view.counts.conflicts })
-                        : statusText(view, t),
-                    ),
+                    notice !== null
+                      ? h('span', { className: 'gcf-foot-note', role: 'status', 'data-gcf': 'notice' }, notice)
+                      : h(
+                          'span',
+                          { className: `gcf-foot-state is-${stateOf(view)}` },
+                          h('i', null),
+                          view.counts.conflicts > 0
+                            ? format(t, 'foot.conflicts', { n: view.counts.conflicts })
+                            : statusText(view, t),
+                        ),
                     h(
                       'button',
                       {
                         type: 'button',
                         className: `gcf-action${view.counts.conflicts > 0 ? ' is-warn' : ''}`,
-                        disabled: reviewing || view.pending !== null || typeof onAction !== 'function',
+                        disabled: reviewing || view.pending !== null || typeof onAction !== 'function'
+                          || (view.counts.conflicts === 0 && view.clean === true),
                         title: reviewing ? t('action.reviewing') : (view.pending !== null ? t('action.pending') : undefined),
                         'data-gcf': view.counts.conflicts > 0 ? 'resolve' : 'commit',
                         onClick: onAction,
@@ -2153,28 +2394,76 @@ body[data-ds-dark-theme] .gcf-dock {
 
       const view = live ?? projected;
 
-      // onAction: handles the primary button click (commit / resolve).
-      // Fetches staged diff, builds a review message, and injects it as a
-      // user message so the LLM reviews and then calls git_flow commit/resolve.
+      // onAction: the primary button (commit / resolve). Reads the review
+      // payload for the repository on screen and injects it as a user
+      // message, so the LLM reviews first and then calls git_flow itself.
+      // Anything that cannot be sent becomes a short notice in the footer.
       const [reviewing, setReviewing] = React.useState(false);
+      const [notice, setNotice] = React.useState(null);
+      // conflictPeekHunks: parsed from the diff payload while conflicts are active.
+      // shape: { [path: string]: { ours: string, theirs: string }[] }
+      const [conflictPeekHunks, setConflictPeekHunks] = React.useState(null);
+      React.useEffect(() => {
+        if (notice === null) return () => {};
+        const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+        return () => clearTimeout(timer);
+      }, [notice]);
+      React.useEffect(() => {
+        setNotice(null);
+        setConflictPeekHunks(null);
+      }, [sessionId, selectedRepo]);
+
+      // Lazily fetch conflict peek data when the view shows conflicts.
+      const viewConflicts = view?.counts?.conflicts ?? 0;
+      React.useEffect(() => {
+        if (viewConflicts === 0) { setConflictPeekHunks(null); return () => {}; }
+        let cancelled = false;
+        (async () => {
+          try {
+            const resp = await fetch(diffUrl(sessionId, selectedRepo), { headers: { accept: 'application/json' }, cache: 'no-store' });
+            if (!resp.ok || cancelled) return;
+            const payload = await resp.json();
+            if (cancelled) return;
+            if (payload.kind === 'conflicts' && typeof payload.patch === 'string') {
+              setConflictPeekHunks(parseConflictPeek(payload.patch));
+            }
+          } catch { /* non-fatal: popover stays empty */ }
+        })();
+        return () => { cancelled = true; };
+      }, [sessionId, selectedRepo, viewConflicts]);
+
       const onAction = React.useCallback(async () => {
-        if (reviewing || typeof sendReview !== 'function') return;
+        if (reviewing) return;
+        if (typeof sendReview !== 'function') {
+          setNotice(t('notice.unavailable'));
+          return;
+        }
         setReviewing(true);
+        setNotice(null);
         try {
           const resp = await fetch(diffUrl(sessionId, selectedRepo), { headers: { accept: 'application/json' }, cache: 'no-store' });
-          if (!resp.ok) return;
-          const diff = await resp.json();
-          if (diff.kind !== 'diff') return;
-          const message = buildReviewMessage(diff, t);
-          await sendReview(message);
+          if (!resp.ok) {
+            setNotice(t('notice.failed'));
+            return;
+          }
+          const payload = await resp.json();
+          if (payload.kind === 'clean') {
+            setNotice(t('notice.clean'));
+            return;
+          }
+          if (payload.kind !== 'diff' && payload.kind !== 'conflicts') {
+            setNotice(t('notice.failed'));
+            return;
+          }
+          await sendReview(buildReviewMessage(payload, selectedRepo));
         } catch {
-          /* silently fail — user can retry */
+          setNotice(t('notice.failed'));
         } finally {
           setReviewing(false);
         }
       }, [sessionId, selectedRepo, sendReview, reviewing, t]);
 
-      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing, onSelectRepo, onBack, selectedRepo });
+      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing, notice, onSelectRepo, onBack, selectedRepo, conflictPeekHunks });
     }
 
     return {

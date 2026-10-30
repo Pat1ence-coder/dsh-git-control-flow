@@ -380,10 +380,10 @@ test('a rejected resolve changes nothing', async () => {
 
 // ── diff ───────────────────────────────────────────────────────────────────
 
-test('diff returns nothing-staged when nothing is staged', async () => {
+test('diff returns clean when there is nothing to review', async () => {
   const captured = harness({ statuses: [snapshot()] });
   const value = await captured.tool.execute({ action: 'diff' }, exec);
-  assert.equal(value.kind, 'nothing-staged');
+  assert.equal(value.kind, 'clean');
   assert.equal(captured.git.length, 0);
 });
 
