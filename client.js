@@ -1258,12 +1258,6 @@ body[data-ds-dark-theme] .gcf-dock {
   color: var(--dsw-alias-label-tertiary, #8a8a8a);
   font-style: italic;
 }
-/* keep popover on screen: flip up if near left edge of card */
-.gcf-conflict-list > *:nth-last-child(1) .gcf-peek-popover,
-.gcf-conflict-list > *:nth-last-child(2) .gcf-peek-popover {
-  left: auto;
-  right: 0;
-}
 @media (prefers-reduced-motion: reduce) {
   .gcf-peek-popover { transition: none; }
 }
