@@ -319,7 +319,7 @@ window.__ModuleLoader__.load({
             'data-phase': 'approval',
             'aria-label': t('app.title'),
           },
-          view !== null
+          view !== null && view.presence === 'repo'
             ? h(CardHeader, { view, t, collapsed: false, scrambleStatus: false })
             : h(
                 'header',
