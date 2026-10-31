@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
     const DIFF_ROUTE = 'api/git-flow.diff';
     const STATUS_ROUTE = 'api/git-flow.status';
     const POLL_MS = 6000;
+    const MOTION = Object.freeze({ graph: 1200, enter: 1500, conflict: 1800, text: 900, width: 540 });
     /** How long a footer notice (e.g. "nothing to commit") stays visible. */
     const NOTICE_MS = 4000;
 
@@ -228,7 +229,7 @@ window.__ModuleLoader__.load({
           'span',
           { className: `gcf-state is-${stateOf(view)}` },
           h('i', null),
-          scrambleStatus === true ? h(Scramble, { text: state }) : state,
+          h(ChangeText, { text: state }),
         ),
         h(Toggle, { collapsed, onToggle, t }),
       );
@@ -269,16 +270,19 @@ window.__ModuleLoader__.load({
 
     /** In-flight write: waiting for the approval dialog, or running after it was allowed. */
     function PendingLine({ pending, t }) {
-      if (pending === null || pending === undefined) return null;
-      const label = pending.phase === 'awaiting-approval' ? t('pending.awaiting') : t('pending.running');
-      return h(
-        'div',
-        { className: `gcf-pending is-${pending.phase}`, 'data-gcf': 'pending' },
-        h(Spinner),
-        h('span', { className: 'gcf-pending-label' }, label),
-        typeof pending.reason === 'string' && pending.reason !== ''
-          ? h('span', { className: 'gcf-pending-reason', title: pending.reason }, pending.reason)
-          : null,
+      const [retained, setRetained] = React.useState(pending);
+      React.useEffect(() => {
+        if (pending) { setRetained(pending); return; }
+        const timer = setTimeout(() => setRetained(null), 360);
+        return () => clearTimeout(timer);
+      }, [pending?.phase, pending?.reason]);
+      const shown = pending ?? retained;
+      return h('div', { className: `gcf-activity${pending ? ' is-visible' : ''}`, 'aria-hidden': !pending },
+        h('div', null, shown ? h('div', { className: `gcf-pending is-${shown.phase}`, 'data-gcf': 'pending' },
+          h(Spinner),
+          h('span', { className: 'gcf-pending-label' }, h(ChangeText, { text: t(shown.phase === 'awaiting-approval' ? 'pending.awaiting' : 'pending.running') })),
+          shown.reason ? h('span', { className: 'gcf-pending-reason', title: shown.reason }, shown.reason) : null,
+        ) : null),
       );
     }
 
@@ -431,7 +435,7 @@ window.__ModuleLoader__.load({
 .gcf-body {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 360ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: grid-template-rows 540ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .gcf-body.is-open { grid-template-rows: 1fr; }
 .gcf-body-inner {
@@ -451,14 +455,13 @@ window.__ModuleLoader__.load({
 .gcf-card-wrap {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 360ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: grid-template-rows 540ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .gcf-card-wrap.is-open { grid-template-rows: 1fr; }
 .gcf-card-wrap > * { min-height: 0; overflow: hidden; }
 .gcf-reveal { }
 .gcf-reveal-inner { overflow: hidden; }
-.gcf-reveal .gcf-card { animation: gcf-card-grow 450ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-.gcf-reveal.is-entered .gcf-card { animation: none; }
+.gcf-reveal .gcf-card { animation: gcf-card-grow 1050ms cubic-bezier(.25, .1, .25, 1) both; }
 @keyframes gcf-card-grow {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }
   to   { opacity: 1; transform: none; }
@@ -566,24 +569,12 @@ window.__ModuleLoader__.load({
   0% { transform: scale(1); opacity: 0.55; }
   70%, 100% { transform: scale(1.15); opacity: 0; }
 }
-/* Spinning arc on SVG nodes when a write is pending */
-@keyframes gcf-ring-spin {
-  from { stroke-dashoffset: 0; }
-  to   { stroke-dashoffset: -28; }
-}
+/* Kept mounted: the parent rotates while activity controls opacity. */
 .gcf-node-arc {
-  transform-origin: 0 0;
-  animation: gcf-ring-spin 0.9s linear infinite;
   stroke: var(--c, #4a7fdc);
   stroke-width: 1.5;
   fill: none;
   stroke-linecap: round;
-  stroke-dasharray: 8 20;
-  opacity: 0.9;
-}
-.gcf-node-arc-warn { stroke: var(--warn, #e3a21a); }
-@media (prefers-reduced-motion: reduce) {
-  .gcf-node-arc { animation: none; stroke-dashoffset: 0; }
 }
 .gcf-graph { position: relative; overflow: visible; }
 .gcf-graph > .gcf-rows {
@@ -618,7 +609,7 @@ window.__ModuleLoader__.load({
   /* The rail owns the first 61px; keep the text column clear of the nodes. */
   padding: 0 8px 0 61px;
   transform: translateY(var(--y, 0));
-  transition: transform 320ms var(--ease, cubic-bezier(0.2, 0.8, 0.2, 1));
+  transition: none;
 }
 /* Hover paint starts after the rail column so it never hides a node. */
 .gcf-row::before {
@@ -638,7 +629,7 @@ window.__ModuleLoader__.load({
   stroke: var(--base-line, #dedede);
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
-  animation: gcf-draw 700ms var(--ease, cubic-bezier(0.2, 0.8, 0.2, 1)) both 100ms;
+  transition: stroke 500ms ease;
 }
 /* Continuation lines (from top / to bottom of window): faded via SVG gradient. */
 .gcf-edge.is-continuation {
@@ -651,11 +642,6 @@ window.__ModuleLoader__.load({
 .gcf-edge.t-merged { stroke: var(--merged-line, #cfbdf8); }
 .gcf-edge.t-warn { stroke: var(--warn-line, #ecc68a); }
 .gcf-edge.t-ok { stroke: var(--ok-line, #a8e0c0); }
-@keyframes gcf-draw {
-  /* Draw from bottom to top: -1 means the path is drawn in reverse. */
-  from { stroke-dashoffset: -1; }
-  to { stroke-dashoffset: 0; }
-}
 .gcf-node { --c: var(--base, #bdbdbd); }
 .gcf-node.t-ours { --c: var(--blue, #4a7fdc); }
 .gcf-node.t-other { --c: var(--teal, #22c4a0); }
@@ -690,18 +676,8 @@ window.__ModuleLoader__.load({
 .gcf-pill.is-branch { background: #f2f2f2; color: #5f5f5f; }
 .gcf-pill.is-remote { background: #e6f4f1; color: #2f9e8f; }
 .gcf-pill.is-tag { background: #fdf3e2; color: #b07a2a; }
-/* Row entrance and exit: only applied by useStableRows, not unconditionally. */
-.gcf-row.is-entering {
-  animation: gcf-row-in 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  animation-delay: calc(var(--rev, 0) * 45ms + 60ms);
-}
-.gcf-row.is-exiting {
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 260ms ease;
-}
 .gcf-swap {
-  animation: gcf-decode 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: gcf-decode 900ms cubic-bezier(.25, .1, .25, 1) both;
 }
 @keyframes gcf-decode {
   from { opacity: 0.35; filter: blur(6px); }
@@ -1305,16 +1281,73 @@ body[data-ds-dark-theme] .gcf-dock {
   .gcf-peek-popover { transition: none; }
 }
 
-  flex: none;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 24px;
-  color: var(--dsw-alias-label-primary, #1d1d1f);
-  white-space: nowrap;
+/* Continuous scene motion: geometry is sampled once for rows and SVG. */
+.gcf-graph > .gcf-rows > .gcf-row { transition: none; animation: none; }
+.gcf-edge { animation: none; transition: stroke 1100ms ease; }
+.gcf-node { transition: color 1100ms ease; }
+.gcf-node.t-base { --c: var(--base, #bdbdbd); }
+.gcf-n-dot { transition: fill 1100ms ease, stroke 750ms ease, r 900ms ease; }
+.gcf-node-arc { animation: none; stroke: var(--c); stroke-dasharray: .64 .36; }
+.gcf-orbit { transform-origin: 0 0; animation: gcf-orbit-turn 2s linear infinite; }
+@keyframes gcf-orbit-turn { to { transform: rotate(360deg); } }
+.gcf-row-content { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; }
+.gcf-row-content.is-previous { position: absolute; left: 61px; right: 8px; width: auto; pointer-events: none; }
+.gcf-row.is-completed::before { background: var(--ok-bg, #eaf7ef); animation: gcf-complete-glow 2000ms ease-out forwards; }
+.gcf-row.is-merged-commit::before { background: var(--merged-bg); }
+.gcf-row.is-merged-commit .gcf-pill.is-head { background: var(--merged-bg); color: var(--merged-ink); }
+@keyframes gcf-complete-glow { from { opacity: .8; } to { opacity: 0; } }
+.gcf-card { transition: border-color 1100ms ease, background-color 1100ms ease; }
+.gcf-card.is-merged { border-color: var(--merged-line); }
+.gcf-card.is-merged .gcf-state, .gcf-card.is-merged .gcf-foot-state { color: var(--merged-ink); }
+.gcf-pill, .gcf-state, .gcf-chip, .gcf-badge { transition: background-color 400ms ease, color 400ms ease, border-color 400ms ease; }
+.gcf-chip { background: var(--dsw-alias-bg-layer-1, #fff); }
+body[data-ds-dark-theme] .gcf-dock {
+  --ink: #e6e7eb; --ink-2: #cfd2da; --muted: #a6acb9; --faint: #858c9b;
+  --hair: #353b47; --soft: #2a303b; --base-line: #586173;
+  --blue-tag-bg: #263852; --blue-tag: #9fbeff; --teal-tag-bg: #203d37; --teal-tag: #72d9bd;
+  --warn-ink: #efbe78; --warn-bg: #3d3322; --warn-line: #755b30;
+  --ok-ink: #80d7a1; --ok-bg: #203c30; --merged-ink: #c0a5ff; --merged-line: #665383;
+  --merged-bg: #352b48;
+  --accent-bg: #2c3856; --accent-ink: #b4c9ff;
+}
+.gcf-change-text { display: inline-block; position: relative; vertical-align: bottom; white-space: nowrap; max-width: 100%; }
+.gcf-text-in { display: inline-block; animation: gcf-text-in 540ms cubic-bezier(.25,.1,.25,1) both; }
+.gcf-text-out { position: absolute; left: 0; top: 0; pointer-events: none; animation: gcf-text-out 450ms ease forwards; }
+@keyframes gcf-text-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes gcf-text-out { to { opacity: 0; transform: translateY(-3px); } }
+.gcf-activity { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 360ms ease, opacity 270ms ease; }
+.gcf-activity.is-visible { grid-template-rows: 1fr; opacity: 1; }
+.gcf-activity > div { min-height: 0; overflow: hidden; }
+.gcf-action { display: inline-flex; align-items: center; gap: 0; }
+.gcf-button-busy { display: inline-flex; width: 0; opacity: 0; overflow: hidden; transition: width 180ms ease, opacity 150ms ease, margin-right 180ms ease; }
+.gcf-button-busy.is-visible { width: 14px; opacity: 1; margin-right: 5px; }
+.gcf-conflict-list { position: relative; border: 0; padding: 0; transition: margin-top 320ms ease; }
+.gcf-conflict-list .gcf-row--conflict { position: absolute; top: 0; left: 0; right: 0; height: 30px; padding: 0 8px 0 28px; transition: color 240ms ease, background-color 240ms ease; }
+.gcf-conflict-list .is-resolved, .gcf-conflict-list .is-resolved .gcf-badge { color: var(--ok-ink); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.gcf-conflict-list .gcf-badge svg { width: 12px; height: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .gcf-dock *, .gcf-dock *::before { animation: none !important; transition: none !important; }
+  .gcf-row.is-completed::before { opacity: 0; }
 }
 `;
 
     const zh = {
+      'action.resolving': '处理中',
+      'action.done': '已完成',
+      'conflict.resolved': '已解决',
+      'activity.review': '模型处理中',
+      'activity.stage': '正在暂存改动',
+      'activity.commit': '正在提交改动',
+      'activity.merge': '正在合并分支',
+      'activity.resolve': '正在完成冲突解决',
+      'activity.abort': '正在中止操作',
+      'activity.working': '执行中',
+      'activity.failed': '操作未完成，请查看对话中的结果',
+      'done.stage': '改动已暂存',
+      'done.commit': '提交完成',
+      'done.merge': '合并完成',
+      'done.resolve': '冲突处理完成',
+      'done.abort': '操作已中止',
       'app.title': 'Git 工作流',
       'branch.detached': '游离 HEAD @ {oid}',
       'branch.unknown': '未知分支',
@@ -1323,10 +1356,10 @@ body[data-ds-dark-theme] .gcf-dock {
       'status.clean': '干净',
       'status.changes': '{n} 处变更',
       'status.conflicts': '{n} 处冲突',
-      'status.merge': '合并中',
-      'status.rebase': '变基中',
-      'status.cherry-pick': '拣选中',
-      'status.revert': '回滚中',
+      'status.merge': '合并待继续',
+      'status.rebase': '变基待继续',
+      'status.cherry-pick': '拣选待继续',
+      'status.revert': '回滚待继续',
       'row.working': '未提交的改动',
       'row.files': '{n} 个文件',
       'rows.more': '还有 {n} 条提交',
@@ -1354,7 +1387,7 @@ body[data-ds-dark-theme] .gcf-dock {
       'state.open': 'Open',
       'state.ready': '可合并',
       'state.merged': '已合并',
-      'row.operation.merge': 'Merge into main',
+      'row.operation.merge': '合并进行中',
       'row.operation.rebase': 'Rebase onto upstream',
       'row.operation.cherry-pick': 'Cherry-pick in progress',
       'row.operation.revert': 'Revert in progress',
@@ -1373,6 +1406,22 @@ body[data-ds-dark-theme] .gcf-dock {
     };
 
     const en = {
+      'action.resolving': 'Working',
+      'action.done': 'Done',
+      'conflict.resolved': 'Resolved',
+      'activity.review': 'Model is working',
+      'activity.stage': 'Staging changes',
+      'activity.commit': 'Committing changes',
+      'activity.merge': 'Merging the branch',
+      'activity.resolve': 'Completing conflict resolution',
+      'activity.abort': 'Aborting the operation',
+      'activity.working': 'Running',
+      'activity.failed': 'Operation incomplete — see the result in the conversation',
+      'done.stage': 'Changes staged',
+      'done.commit': 'Commit completed',
+      'done.merge': 'Merge completed',
+      'done.resolve': 'Conflict resolution completed',
+      'done.abort': 'Operation aborted',
       'app.title': 'Git workflow',
       'branch.detached': 'detached HEAD @ {oid}',
       'branch.unknown': 'unknown branch',
@@ -1381,10 +1430,10 @@ body[data-ds-dark-theme] .gcf-dock {
       'status.clean': 'Clean',
       'status.changes': '{n} changes',
       'status.conflicts': '{n} conflicts',
-      'status.merge': 'Merging',
-      'status.rebase': 'Rebasing',
-      'status.cherry-pick': 'Cherry-picking',
-      'status.revert': 'Reverting',
+      'status.merge': 'Merge awaiting continuation',
+      'status.rebase': 'Rebase awaiting continuation',
+      'status.cherry-pick': 'Cherry-pick awaiting continuation',
+      'status.revert': 'Revert awaiting continuation',
       'row.working': 'Uncommitted changes',
       'row.files': '{n} files',
       'rows.more': '{n} more commits',
@@ -1412,7 +1461,7 @@ body[data-ds-dark-theme] .gcf-dock {
       'state.open': 'Open',
       'state.ready': 'Ready',
       'state.merged': 'Merged',
-      'row.operation.merge': 'Merge into main',
+      'row.operation.merge': 'Merge in progress',
       'row.operation.rebase': 'Rebase onto upstream',
       'row.operation.cherry-pick': 'Cherry-pick in progress',
       'row.operation.revert': 'Revert in progress',
@@ -1440,7 +1489,7 @@ body[data-ds-dark-theme] .gcf-dock {
     }
 
     const GLYPHS = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    const SCRAMBLE_MS = 420;
+    const SCRAMBLE_MS = MOTION.text;
 
     function prefersReducedMotion() {
       try {
@@ -1448,6 +1497,49 @@ body[data-ds-dark-theme] .gcf-dock {
       } catch {
         return false;
       }
+    }
+
+    function useReducedMotion() {
+      const subscribe = React.useCallback((notify) => {
+        if (typeof matchMedia !== 'function') return () => {};
+        const media = matchMedia('(prefers-reduced-motion: reduce)');
+        media.addEventListener('change', notify);
+        return () => media.removeEventListener('change', notify);
+      }, []);
+      return React.useSyncExternalStore(subscribe, prefersReducedMotion, () => false);
+    }
+
+    /** Keep old text just long enough to crossfade; unchanged polls do nothing. */
+    function ChangeText({ text, decode = false }) {
+      const reduced = useReducedMotion();
+      const [content, setContent] = React.useState({ text, previous: null });
+      const element = React.useRef(null);
+      const width = React.useRef(null);
+      React.useEffect(() => {
+        if (content.text === text) return;
+        setContent({ text, previous: reduced ? null : content.text });
+      }, [text, reduced]);
+      React.useEffect(() => {
+        if (content.previous === null) return;
+        const timer = setTimeout(() => setContent((value) => ({ ...value, previous: null })), MOTION.text);
+        return () => clearTimeout(timer);
+      }, [content.text]);
+      React.useLayoutEffect(() => {
+        const el = element.current;
+        if (!el) return;
+        const next = el.scrollWidth;
+        const old = width.current;
+        width.current = next;
+        if (!reduced && old !== null && Math.abs(old - next) > .5 && typeof el.animate === 'function') {
+          const animation = el.animate([{ width: `${old}px` }, { width: `${next}px` }], { duration: MOTION.width, easing: 'cubic-bezier(.25,.1,.25,1)' });
+          return () => animation.cancel();
+        }
+      }, [content.text, reduced]);
+      return h('span', { className: 'gcf-change-text', ref: element },
+        h('span', { key: content.text, className: content.previous !== null && !reduced ? 'gcf-text-in' : '' },
+          decode && content.previous !== null && !reduced ? h(Scramble, { text: content.text }) : content.text),
+        content.previous !== null && !reduced ? h('span', { key: `old:${content.text}`, className: 'gcf-text-out', 'aria-hidden': true }, content.previous) : null,
+      );
     }
 
     /** Random glyphs resolving left to right into the final text (video 4.0s / 5.5s). */
@@ -1480,16 +1572,8 @@ body[data-ds-dark-theme] .gcf-dock {
     /** Card entrance: fade + lift + scale (replica gg-card-grow, video 2.5s).
      *  Wraps the card section so the animation fires exactly once on mount. */
     function Reveal({ children }) {
-      const [entered, setEntered] = React.useState(false);
-      React.useEffect(() => {
-        const raf = requestAnimationFrame(() => setEntered(true));
-        return () => cancelAnimationFrame(raf);
-      }, []);
-      return h(
-        'div',
-        { className: `gcf-reveal${entered ? ' is-entered' : ''}` },
-        children,
-      );
+      // CSS owns the complete entrance lifetime; no next-frame cancellation.
+      return h('div', { className: 'gcf-reveal' }, children);
     }
 
     /** Branch glyph: one trunk with a forked commit, drawn for this plugin. */
@@ -1677,9 +1761,50 @@ body[data-ds-dark-theme] .gcf-dock {
       return t('status.clean');
     }
 
+    function completionOf(view) {
+      const result = view.completion;
+      if (!result || view.pending || result.repoRoot !== view.repoRoot) return null;
+      if (result.statusKey && result.statusKey !== view.statusKey) return null;
+      if (result.outcome === 'succeeded' && result.head !== view.branch?.oid) return null;
+      return result;
+    }
+
+    function activityText(view, t, reviewing, running) {
+      if (view.pending) return t(view.pending.phase === 'awaiting-approval' ? 'pending.awaiting' : `activity.${view.pending.action ?? 'working'}`);
+      const done = completionOf(view);
+      if (done) return t(done.outcome === 'succeeded' ? `done.${done.action}` : 'activity.failed');
+      if (reviewing || (running && view.counts.conflicts > 0)) return t('activity.review');
+      return view.counts.conflicts > 0 ? format(t, 'foot.conflicts', { n: view.counts.conflicts }) : statusText(view, t);
+    }
+
+    function ConflictList({ rows, view, t, conflictPeekHunks, completion }) {
+      const containerRef = React.useRef(null);
+      const previousCount = React.useRef(view.counts.conflicts);
+      const resolving = view.counts.conflicts < previousCount.current
+        && (view.operation !== null || (completion?.outcome === 'succeeded' && ['merge', 'resolve'].includes(completion.action)));
+      React.useEffect(() => { previousCount.current = view.counts.conflicts; }, [view.counts.conflicts]);
+      const frame = useGraphMotion(rows, [], false, null, { rowHeight: 32, resolved: resolving, containerRef });
+      return h('div', { className: 'gcf-conflict-list', 'data-gcf': 'conflict-list', ref: containerRef,
+        style: { height: `${frame.height}px`, marginTop: frame.height > 0 ? 8 : 0, opacity: frame.height > 0 ? 1 : 0 } },
+        frame.rows.map((entry) => h('div', {
+          key: entry.key, className: `gcf-row gcf-row--conflict${entry.resolved ? ' is-resolved' : ''}`,
+          'data-gcf': 'conflict-row', 'data-conflict': entry.row.path, tabIndex: entry.exiting ? -1 : 0,
+          'aria-hidden': entry.exiting || undefined,
+          style: { transform: `translateY(${entry.y}px)`, opacity: entry.opacity, pointerEvents: entry.exiting ? 'none' : undefined },
+        },
+        h('span', { className: 'gcf-badge', 'aria-hidden': true }, entry.resolved ? h(CheckGlyph) : String(entry.row.index)),
+        h('span', { className: 'gcf-subject' }, entry.row.path),
+        h('span', { className: 'gcf-meta' }, entry.resolved ? t('conflict.resolved') : h('code', null, entry.row.code)),
+        h(ConflictPeekPopover, { hunks: conflictPeekHunks?.[entry.row.path] ?? null, t }),
+        )),
+      );
+    }
+
     /** One state word for the header pill: open / conflicts / ready / merged. */
     function stateOf(view) {
       if (view.pr !== null && view.pr !== undefined && typeof view.pr.state === 'string') return view.pr.state;
+      const done = completionOf(view);
+      if (done?.outcome === 'succeeded' && view.clean && view.operation === null && (done.action === 'merge' || (done.action === 'resolve' && done.operation === 'merge'))) return 'merged';
       if (view.phase === 'conflicts') return 'conflicts';
       if (view.clean) return 'clean';
       return 'changes';
@@ -1748,191 +1873,173 @@ body[data-ds-dark-theme] .gcf-dock {
       return laneTone(Number.isInteger(row.lane) ? row.lane : 0);
     }
 
-    /**
-     * The whole card's graph in one SVG (replica render.ts): long edges between
-     * rows, nodes on top, draw-on animation via `pathLength`.
-     */
-    /**
-     * Stable keyed row list: nodes survive re-renders so CSS
-     * `transition: transform` can slide them when --y changes.
-     * New rows get `is-entering`; removed rows get `is-exiting` and are
-     * removed from the DOM after 300ms (or immediately if reduced-motion).
-     */
-    function useStableRows(nextRows, reduced) {
-      // stableMap: id → { row, y } for currently rendered rows.
-      const stableRef = React.useRef(new Map());
-      // exitSet: id → true, rows fading out but not yet removed.
-      const exitRef = React.useRef(new Set());
-      const [tick, setTick] = React.useState(0);
-      const bump = React.useCallback(() => setTick((n) => n + 1), []);
-
-      // Derive the next stable map from the incoming rows.
-      const nextIds = new Set(nextRows.map((r) => r.id));
-      const prevIds = new Set(stableRef.current.keys());
-
-      // Added rows: mark as entering.
-      const entering = new Set();
-      for (const row of nextRows) {
-        if (!prevIds.has(row.id) && !exitRef.current.has(row.id)) entering.add(row.id);
+    const GRAPH_MS = MOTION.graph;
+    const rowIdentity = (row) => row.kind === 'commit' ? (row.sha ?? row.id) : row.id;
+    const mix = (from, to, p) => from + (to - from) * p;
+    // One easing clock for text, nodes, edges and container height.
+    function motionEase(p) {
+      let lo = 0, hi = 1;
+      for (let i = 0; i < 10; i += 1) {
+        const t = (lo + hi) / 2;
+        const x = 3 * (1 - t) * (1 - t) * t * .25 + 3 * (1 - t) * t * t * .25 + t * t * t;
+        if (x < p) lo = t; else hi = t;
       }
-
-      // Removed rows: start exit timer.
-      React.useEffect(() => {
-        for (const id of prevIds) {
-          if (!nextIds.has(id) && !exitRef.current.has(id)) {
-            exitRef.current.add(id);
-            if (reduced) {
-              exitRef.current.delete(id);
-              stableRef.current.delete(id);
-            } else {
-              const timerId = setTimeout(() => {
-                exitRef.current.delete(id);
-                stableRef.current.delete(id);
-                bump();
-              }, 300);
-              // Ignore cleanup: the timeout is short and bump is stable.
-              void timerId;
-            }
-          }
-        }
-        bump();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [nextRows]);
-
-      // Rebuild the stable map for this render.
-      const newMap = new Map();
-      // Keep existing rows (including those exiting).
-      for (const [id, entry] of stableRef.current) newMap.set(id, entry);
-      // Update y for rows that stayed, add new ones.
-      nextRows.forEach((row, index) => {
-        newMap.set(row.id, { row, y: index * ROW_HEIGHT });
-      });
-      stableRef.current = newMap;
-
-      // Build ordered output: next-order first, then exiting rows at the end.
-      const ordered = nextRows.map((row, index) => ({
-        row,
-        y: index * ROW_HEIGHT,
-        entering: entering.has(row.id),
-        exiting: false,
-      }));
-      for (const [id, entry] of newMap) {
-        if (exitRef.current.has(id)) {
-          ordered.push({ row: entry.row, y: entry.y, entering: false, exiting: true });
-        }
-      }
-      return ordered;
+      const t = (lo + hi) / 2;
+      return p <= 0 ? 0 : p >= 1 ? 1 : 3 * (1 - t) * (1 - t) * t * .1 + 3 * (1 - t) * t * t + t * t * t;
     }
 
-    function GraphSection({ rows, edges, t, now, reduced, hasPending = false }) {
-      const entries = useStableRows(rows, reduced);
-      const graphHeight = rows.length * ROW_HEIGHT;
-      return h(
-        'div',
-        { className: 'gcf-graph', style: { height: `${graphHeight}px` } },
-        h(GraphRail, { rows, edges, hasPending }),
-        h(
-          'div',
-          { className: 'gcf-rows', 'data-gcf': 'rows' },
-          entries.map(({ row, y, entering, exiting }, index) =>
-            h(Row, {
-              key: exiting ? `exit:${row.id}` : row.id,
-              row,
-              t,
-              now,
-              index: Math.round(y / ROW_HEIGHT),
-              total: rows.length,
-              scramble: !exiting && row.kind === 'commit' && index === 0,
-              entering,
-              exiting,
-            }),
-          ),
-        ),
+    function graphTarget(rows, edges, current, busy, completion, rowHeight = ROW_HEIGHT) {
+      const existing = new Map((current?.rows ?? []).map((entry) => [rowIdentity(entry.row), entry]));
+      const write = completion?.outcome === 'succeeded' ? completion : null;
+      const targetIds = new Set(rows.map(rowIdentity));
+      // The exact write result identifies the new HEAD. No guessed commit or
+      // fabricated progress: only that commit can inherit the operation seat.
+      const replacement = write && write.previousHead !== write.head
+        ? (current?.rows ?? []).find((entry) => !targetIds.has(rowIdentity(entry.row))
+          && entry.row.kind === (write.action === 'commit' ? 'working' : 'operation')
+          && (write.action === 'commit' || entry.row.operation === (write.action === 'merge' ? 'merge' : write.operation)))
+          // A fast resolve can finish before an approved operation node paints.
+          // Reuse its disappearing working seat, never a still-dirty row.
+          ?? (write.action === 'resolve' ? (current?.rows ?? []).find((entry) =>
+            entry.row.kind === 'working' && !targetIds.has(rowIdentity(entry.row))) : null)
+        : null;
+      const entries = rows.map((row, index) => {
+        const old = existing.get(rowIdentity(row));
+        const replace = !old && replacement && row.kind === 'commit' && row.sha === write.head
+          && (row.parentShas ?? []).includes(write.previousHead) ? replacement : null;
+        return {
+          key: old?.key ?? replace?.key ?? rowIdentity(row), row,
+          x: laneX(row.kind === 'commit' ? (row.lane ?? 0) : 0), y: index * rowHeight,
+          opacity: 1, arc: busy && (row.kind === 'working' || row.kind === 'operation') ? 1 : 0,
+          success: Boolean(write && row.kind === 'commit' && row.sha === write.head && ['commit', 'merge', 'resolve'].includes(write.action)),
+        };
+      });
+      const links = edges.flatMap((edge) => {
+        const from = entries[edge.from], to = entries[edge.to];
+        if (!from || !to) return [];
+        return [{ key: `${from.key}>${to.key}`, from: from.key, to: to.key,
+          tone: from.success && from.row.parentShas?.length > 1 ? 'merged' : laneTone(edge.fromLane === 0 ? edge.toLane : edge.fromLane), opacity: 1, draw: 1 }];
+      });
+      return { rows: entries, edges: links, height: rows.length * rowHeight };
+    }
+
+    /** Sample from the currently displayed frame, including mid-flight changes. */
+    function interpolateGraph(from, to, progress, { initial = false, resolved = false } = {}) {
+      const p = motionEase(resolved ? Math.max(0, (progress - .4) / .6) : progress);
+      const oldRows = new Map(from.rows.map((entry) => [entry.key, entry]));
+      const nextRows = new Map(to.rows.map((entry) => [entry.key, entry]));
+      const rows = to.rows.map((entry, index) => {
+        const previous = oldRows.get(entry.key);
+        const delay = initial ? Math.min(0.3, (to.rows.length - 1 - index) * .025) : 0;
+        const enter = motionEase(Math.max(0, (progress - delay) / (1 - delay)));
+        const start = previous ?? { ...entry, y: entry.y + 6, opacity: 0, arc: 0 };
+        const changed = previous && (rowIdentity(previous.row) !== rowIdentity(entry.row));
+        return { ...entry,
+          x: mix(start.x, entry.x, p), y: mix(start.y, entry.y, p),
+          opacity: mix(start.opacity, 1, enter), arc: mix(start.arc, entry.arc, p),
+          previousRow: changed ? previous.row : previous?.previousRow,
+          contentMix: changed ? p : mix(previous?.contentMix ?? 1, 1, p),
+        };
+      });
+      for (const entry of from.rows) {
+        if (nextRows.has(entry.key)) continue;
+        const exit = resolved ? motionEase(Math.max(0, (progress - .4) / .6)) : motionEase(Math.min(1, progress * 2.2));
+        if (progress < 1) rows.push({ ...entry, opacity: entry.opacity * (1 - exit), arc: entry.arc * (1 - p),
+          exiting: true, resolved, y: entry.y });
+      }
+      const oldEdges = new Map(from.edges.map((edge) => [edge.key, edge]));
+      const newEdges = new Set(to.edges.map((edge) => edge.key));
+      const edges = to.edges.map((edge) => {
+        const old = oldEdges.get(edge.key);
+        return { ...edge, opacity: mix(old?.opacity ?? 0, 1, p), draw: mix(old?.draw ?? 0, 1, p) };
+      });
+      if (progress < 1) for (const edge of from.edges) {
+        if (!newEdges.has(edge.key)) edges.push({ ...edge, opacity: edge.opacity * (1 - p) });
+      }
+      return { rows, edges, height: mix(from.height, to.height, p) };
+    }
+
+    function useGraphMotion(rows, edges, busy, completion, { rowHeight = ROW_HEIGHT, resolved = false, containerRef } = {}) {
+      const reduced = useReducedMotion();
+      const initial = React.useRef(true);
+      const first = graphTarget(rows, edges, null, busy, completion, rowHeight);
+      const [frame, setFrame] = React.useState(() => reduced ? first : {
+        ...first, rows: first.rows.map((entry) => ({ ...entry, opacity: 0, arc: 0 })),
+        edges: first.edges.map((edge) => ({ ...edge, opacity: 0, draw: 0 })),
+      });
+      const displayed = React.useRef(frame);
+      const signature = JSON.stringify([rows, edges, busy, completion, rowHeight]);
+      React.useEffect(() => {
+        const from = displayed.current;
+        const to = graphTarget(rows, edges, from, busy, completion, rowHeight);
+        const wasInitial = initial.current;
+        initial.current = false;
+        if (reduced) { displayed.current = to; setFrame(to); return; }
+        const duration = resolved ? MOTION.conflict : wasInitial ? MOTION.enter : GRAPH_MS;
+        let lastTime = performance.now();
+        let elapsed = 0;
+        let raf;
+        const tick = (now) => {
+          const hidden = containerRef?.current?.getClientRects().length === 0;
+          if (!hidden) elapsed += now - lastTime;
+          lastTime = now;
+          if (hidden) { raf = requestAnimationFrame(tick); return; }
+          const p = Math.min(1, elapsed / duration);
+          const next = p >= 1 ? to : interpolateGraph(from, to, p, { initial: wasInitial, resolved });
+          displayed.current = next;
+          setFrame(next);
+          if (p < 1) raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+      }, [signature, reduced]);
+      return frame;
+    }
+
+    function GraphSection({ rows, edges, t, now, hasPending = false, completion = null }) {
+      const containerRef = React.useRef(null);
+      const frame = useGraphMotion(rows, edges, hasPending, completion, { containerRef });
+      return h('div', { className: 'gcf-graph', ref: containerRef, style: { height: `${frame.height}px` } },
+        h(GraphRail, { frame }),
+        h('div', { className: 'gcf-rows', 'data-gcf': 'rows' }, frame.rows.map((entry) =>
+          h(Row, { key: entry.key, row: entry.row, entry, t, now }),
+        )),
       );
     }
 
-    function GraphRail({ rows, edges, hasPending = false }) {
-      const commits = rows.filter((row) => row.kind === 'commit');
-      const maxLane = Math.max(0, ...commits.map((row) => (Number.isInteger(row.lane) ? row.lane : 0)));
-      const width = LANE_X0 * 2 + (maxLane + 1) * LANE_WIDTH;
-      const height = rows.length * ROW_HEIGHT;
-      // index < 0 → top of window (y=0); index >= rows.length → bottom (y=height)
-      const y = (index) => (index < 0 ? 0 : index >= rows.length ? height : index * ROW_HEIGHT + ROW_HEIGHT / 2);
-      const x = (lane) => LANE_X0 + lane * LANE_WIDTH;
-      const edgeParts = [];
-      const nodeParts = [];
-
-      for (const edge of edges) {
-        const x1 = x(edge.fromLane);
-        const x2 = x(edge.toLane);
-        // Skip continuation edges (no node at one end) — they look broken regardless
-        // of styling. The "N more commits" footer already signals truncated history.
-        if (edge.from < 0 || edge.to >= rows.length) continue;
-
-        const y1 = y(edge.from);
-        const y2 = y(edge.to);
-        const bend = Math.max(y1, y2 - ROW_HEIGHT);
-        const mid = (bend + y2) / 2;
-        const tone = laneTone(edge.fromLane === 0 ? edge.toLane : edge.fromLane);
-        edgeParts.push(
-          h('path', {
-            key: `e${edge.from}>${edge.to}>${edge.fromLane}`,
-            className: `gcf-edge t-${tone}`,
-            d: `M${x1} ${y1}L${x1} ${bend}C${x1} ${mid},${x2} ${mid},${x2} ${y2}`,
-            pathLength: 1,
-          }),
-        );
-      }
-
-      rows.forEach((row, index) => {
-        if (row.kind !== 'commit') {
-          // working/operation rows get a distinct node in the rail at lane 0.
-          if (row.kind === 'working' || row.kind === 'operation') {
-            const cx = x(0), cy = y(index);
-            if (row.kind === 'operation') {
-              // Merge/rebase in-progress: filled amber dot with white halo + optional spinning arc
-              const fill = row.operation === 'merge' ? 'var(--warn, #e3a21a)' : 'var(--base, #bdbdbd)';
-              nodeParts.push(h('g', { key: `n${row.id}`, transform: `translate(${cx} ${cy})` },
-                h('circle', { r: 9, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
-                h('circle', { r: 6, fill }),
-                hasPending ? h('circle', { className: 'gcf-node-arc gcf-node-arc-warn', r: 10, strokeDasharray: '10 22' }) : null,
-              ));
-            } else {
-              // Working changes: hollow dashed ring with white background halo + optional spinning arc
-              nodeParts.push(h('g', { key: `n${row.id}`, transform: `translate(${cx} ${cy})` },
-                h('circle', { r: 7, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
-                h('circle', {
-                  r: 5, fill: 'none',
-                  stroke: 'var(--base-line, #dedede)',
-                  strokeWidth: 1.5,
-                  strokeDasharray: '3 3',
-                }),
-                hasPending ? h('circle', { className: 'gcf-node-arc', r: 9, strokeDasharray: '10 22' }) : null,
-              ));
-            }
-          }
-          return;
-        }
-        const lane = Number.isInteger(row.lane) ? row.lane : 0;
-        // White halo ring before the coloured dot so the line visually stops
-        // short of the node — matching the reference video gap.
-        nodeParts.push(
-          h(
-            'g',
-            { key: `n${row.id}`, className: `gcf-node t-${toneOfRow(row)}`, transform: `translate(${x(lane)} ${y(index)})` },
-            h('circle', { r: 6.5, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
-            h('circle', { className: 'gcf-n-dot', r: 3.5 }),
-          ),
-        );
-      });
-
-      // Edges rendered first, nodes on top — so nodes cover the lines at their centers.
-      return h(
-        'svg',
-        { className: 'gcf-rail', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': true },
-        null,
-        h('g', { className: 'gcf-edges' }, edgeParts),
-        h('g', { className: 'gcf-nodes' }, nodeParts),
+    function GraphRail({ frame, rows = [], edges = [] }) {
+      // The retained approval component also uses this renderer without motion.
+      frame = frame ?? graphTarget(rows, edges, null, false, null);
+      const entries = new Map(frame.rows.map((entry) => [entry.key, entry]));
+      const width = Math.max(LANE_X0 * 2 + LANE_WIDTH, ...frame.rows.map((entry) => entry.x + 18));
+      return h('svg', { className: 'gcf-rail', width, height: Math.max(1, frame.height), 'aria-hidden': true },
+        h('g', { className: 'gcf-edges' }, frame.edges.map((edge) => {
+          const from = entries.get(edge.from), to = entries.get(edge.to);
+          if (!from || !to) return null;
+          const y1 = from.y + ROW_HEIGHT / 2, y2 = to.y + ROW_HEIGHT / 2;
+          const bend = Math.max(y1, y2 - ROW_HEIGHT), mid = (bend + y2) / 2;
+          return h('path', {
+            key: edge.key, 'data-edge': edge.key, className: `gcf-edge t-${edge.tone}`,
+            d: `M${from.x} ${y1}L${from.x} ${bend}C${from.x} ${mid},${to.x} ${mid},${to.x} ${y2}`,
+            pathLength: 1, style: { opacity: Math.min(edge.opacity, from.opacity, to.opacity), strokeDashoffset: -(1 - edge.draw) },
+          });
+        })),
+        h('g', { className: 'gcf-nodes' }, frame.rows.map((entry) => {
+          const { row } = entry;
+          const working = row.kind === 'working';
+          const tone = entry.success ? (row.parentShas?.length > 1 ? 'merged' : 'ok')
+            : row.kind === 'operation' ? 'warn' : row.kind === 'commit' ? toneOfRow(row) : 'base';
+          return h('g', {
+            key: entry.key, 'data-node': entry.key, className: `gcf-node t-${tone}`,
+            transform: `translate(${entry.x} ${entry.y + ROW_HEIGHT / 2})`, style: { opacity: entry.opacity },
+          },
+          h('circle', { r: 6.5, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
+          h('circle', { className: 'gcf-n-dot', r: working ? 5 : row.kind === 'operation' ? 5 : 3.5,
+            style: { fill: working ? 'none' : undefined, stroke: working ? 'var(--c)' : 'none' }, strokeDasharray: working ? '3 3' : undefined }),
+          h('g', { className: 'gcf-orbit', style: { opacity: entry.arc, animationPlayState: entry.arc > .001 ? 'running' : 'paused' } },
+            h('circle', { className: 'gcf-node-arc', r: 9, pathLength: 1, strokeDasharray: '.64 .36' })),
+          );
+        })),
       );
     }
 
@@ -1940,97 +2047,36 @@ body[data-ds-dark-theme] .gcf-dock {
       return name.startsWith('origin/') ? name.slice('origin/'.length) : name;
     }
 
-    function Row({ row, t, now, index, total, scramble, entering, exiting }) {
-      const motionClass = exiting ? ' is-exiting' : (entering === false ? '' : ' is-entering');
-      if (row.kind === 'operation') {
-        return h(
-          'div',
-          {
-            className: `gcf-row gcf-row--operation${motionClass}`,
-            'data-gcf': 'row',
-            'data-kind': 'operation',
-            style: { '--gcf-i': String(index), '--y': `${index * ROW_HEIGHT}px` },
-          },
-          h('span', { className: 'gcf-op-icon' }, h(WarnGlyph)),
-          h('span', { className: 'gcf-subject' }, format(t, `row.operation.${row.operation}`)),
-          h(
-            'span',
-            { className: `gcf-meta${row.conflicts > 0 ? ' is-warn' : ''}` },
-            row.conflicts > 0 ? format(t, 'row.conflicts', { n: row.conflicts }) : t('row.merging'),
+    function RowContents({ row, t, now, decoding = false }) {
+      const title = row.kind === 'working' ? t('row.working')
+        : row.kind === 'operation' ? (row.action ? t(`activity.${row.action}`) : format(t, `row.operation.${row.operation}`)) : row.subject;
+      const refs = (row.refs ?? []).filter((ref, index, all) => all.findIndex((other) => shortRef(other.name) === shortRef(ref.name)) === index).slice(0, 2);
+      return h(React.Fragment, null,
+        h('span', { className: 'gcf-subject' }, decoding ? h(Scramble, { text: title }) : h(ChangeText, { text: title, decode: row.kind === 'commit' })),
+        h('span', { className: 'gcf-meta' },
+          row.kind === 'working' ? h(ChangeText, { text: format(t, 'row.files', { n: row.files }) })
+          : row.kind === 'operation' ? h(ChangeText, { text: row.conflicts > 0 ? format(t, 'row.conflicts', { n: row.conflicts }) : t('row.merging') })
+          : h(React.Fragment, null,
+            h('span', { className: 'gcf-pills' }, refs.map((ref) => h('span', { key: ref.name, className: `gcf-pill is-${ref.kind}` }, shortRef(ref.name)))),
+            h('code', null, row.id), h('span', null, row.author), h('span', null, relativeTime(row.time, now, t)),
           ),
-        );
-      }
-      if (row.kind === 'conflict') {
-        return h(
-          'div',
-          {
-            className: 'gcf-row gcf-row--conflict',
-            'data-gcf': 'row',
-            'data-kind': 'conflict',
-            style: { '--gcf-i': String(index), '--y': `${index * ROW_HEIGHT}px` },
-          },
-          h('span', { className: 'gcf-badge', 'aria-hidden': true }, String(row.index)),
-          h('span', { className: 'gcf-subject' }, row.path),
-          h('span', { className: 'gcf-meta' }, h('code', null, row.code)),
-        );
-      }
-      if (row.kind === 'working') {
-        return h(
-          'div',
-          {
-            className: `gcf-row gcf-row--working${motionClass}`,
-            'data-gcf': 'row',
-            'data-kind': 'working',
-            style: {
-              '--gcf-i': String(index),
-              '--rev': String(Math.max(0, (total ?? index + 1) - 1 - index)),
-              '--y': `${index * ROW_HEIGHT}px`,
-            },
-          },
-          h('span', { className: 'gcf-rail-wait' }, h(Spinner)),
-          h('span', { className: 'gcf-subject' }, t('row.working')),
-          h('span', { className: 'gcf-meta' }, format(t, 'row.files', { n: row.files })),
-        );
-      }
-      return h(
-        'div',
-        {
-          className: `gcf-row${(row.lane ?? 0) === 0 ? ' is-strong' : ''}${motionClass}`,
-          'data-gcf': 'row',
-          'data-kind': 'commit',
-          style: {
-            '--gcf-i': String(index),
-            '--rev': String(Math.max(0, (total ?? index + 1) - 1 - index)),
-            '--y': `${index * ROW_HEIGHT}px`,
-          },
-        },
-        h(
-          'span',
-          { className: 'gcf-subject' },
-          scramble ? h(Scramble, { text: row.subject }) : row.subject,
         ),
-        h(
-          'span',
-          { className: 'gcf-meta' },
-          Array.isArray(row.refs) && row.refs.length > 0
-            ? h(
-                'span',
-                { className: 'gcf-pills' },
-                // Deduplicate by display name (e.g. HEAD -> feat/x and feat/x
-                // both shorten to the same label; keep the first / higher-priority one).
-                row.refs.reduce((acc, ref) => {
-                  const label = shortRef(ref.name);
-                  if (!acc.seen.has(label)) { acc.seen.add(label); acc.list.push(ref); }
-                  return acc;
-                }, { seen: new Set(), list: [] }).list.slice(0, 2).map((ref) =>
-                  h('span', { key: ref.name, className: `gcf-pill is-${ref.kind}` }, shortRef(ref.name)),
-                ),
-              )
-            : null,
-          h('code', null, row.id),
-          h('span', null, row.author),
-          h('span', null, relativeTime(row.time, now, t)),
-        ),
+      );
+    }
+
+    function Row({ row, entry, t, now, index = 0 }) {
+      const y = entry?.y ?? index * ROW_HEIGHT;
+      const blending = entry?.previousRow && (entry.contentMix ?? 1) < 1;
+      return h('div', {
+        className: `gcf-row gcf-row--${row.kind}${entry?.success ? ' is-completed' : ''}${entry?.success && row.parentShas?.length > 1 ? ' is-merged-commit' : ''}`,
+        'data-gcf': 'row', 'data-kind': row.kind, 'data-row': entry?.key ?? rowIdentity(row),
+        'data-exiting': entry?.exiting || undefined,
+        'aria-hidden': entry?.exiting || undefined,
+        style: { '--y': `${y}px`, opacity: entry?.opacity ?? 1, pointerEvents: entry?.exiting ? 'none' : undefined },
+      },
+      h('div', { className: 'gcf-row-content', style: { opacity: blending ? entry.contentMix : 1 } }, h(RowContents, { key: rowIdentity(row), row, t, now, decoding: Boolean(blending && row.kind === 'commit') })),
+      blending ? h('div', { className: 'gcf-row-content is-previous', 'aria-hidden': true, style: { opacity: 1 - entry.contentMix } },
+        h(RowContents, { row: entry.previousRow, t, now })) : null,
       );
     }
 
@@ -2089,7 +2135,7 @@ body[data-ds-dark-theme] .gcf-dock {
           'span',
           { key: 'state', className: `gcf-chip is-${stateOf(view)}` },
           h('i', null),
-          expanded ? stateText(view, t) : branchName,
+          h(ChangeText, { text: expanded ? stateText(view, t) : branchName }),
         ),
       );
       if (view.branch?.upstream !== null && view.branch?.upstream !== undefined) {
@@ -2122,8 +2168,8 @@ body[data-ds-dark-theme] .gcf-dock {
           h(
             'span',
             { key: 'diff', className: 'gcf-chip gcf-chip--diff' },
-            h('b', null, `+${view.diffStat.add}`),
-            h('em', null, `\u2212${view.diffStat.del}`),
+            h('b', null, h(ChangeText, { text: `+${view.diffStat.add}` })),
+            h('em', null, h(ChangeText, { text: `\u2212${view.diffStat.del}` })),
             h(
               'span',
               { className: 'gcf-heat' },
@@ -2213,7 +2259,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false, notice = null, onSelectRepo, onBack, selectedRepo, conflictPeekHunks = null }) {
+    function GitFlowView({ view, t, now, collapsed = false, onToggle, onAction, reviewing = false, notice = null, onSelectRepo, onBack, selectedRepo, conflictPeekHunks = null, sessionRunning = false }) {
       if (view === undefined || view === null) return null;
       if (view.presence !== 'repo') {
         if (Array.isArray(view.repositories) && view.repositories.length > 0) {
@@ -2239,10 +2285,18 @@ body[data-ds-dark-theme] .gcf-dock {
         return null;
       }
 
+      return h(RepositoryCard, { key: view.repoRoot ?? selectedRepo ?? 'repo', view, t, now, collapsed, onToggle,
+        onAction, reviewing, notice, onSelectRepo, onBack, selectedRepo, conflictPeekHunks, sessionRunning });
+    }
+
+    function RepositoryCard({ view, t, now, collapsed, onToggle, onAction, reviewing, notice, onBack, selectedRepo, conflictPeekHunks, sessionRunning }) {
       // Conflict files are shown as a separate list below the graph, not as
       // graph rows, so the SVG y-coordinates stay correct.
       const conflictRows = (view.conflictRows ?? []).map((row) => ({ ...row, kind: 'conflict' }));
       const graphRows = view.rows;
+      const completion = completionOf(view);
+      const busy = Boolean(view.pending) || reviewing || (sessionRunning && view.counts.conflicts > 0 && !completion);
+      const graphBusy = view.pending ? view.pending.phase === 'running' : busy;
 
       const bodyRef = useBodyRef(collapsed);
       // cardWrapRef drives the outer grid collapse — the entire card incl. header.
@@ -2254,7 +2308,7 @@ body[data-ds-dark-theme] .gcf-dock {
             h(
               'section',
               {
-                className: `gcf-card${view.phase === 'conflicts' ? ' is-conflict' : ''}`,
+                className: `gcf-card${view.phase === 'conflicts' ? ' is-conflict' : ''}${stateOf(view) === 'merged' ? ' is-merged' : ''}`,
                 'data-gcf': 'card',
                 'data-phase': view.phase,
                 'aria-label': t('app.title'),
@@ -2267,36 +2321,11 @@ body[data-ds-dark-theme] .gcf-dock {
                 h(
                   'div',
                   { className: 'gcf-body-inner' },
-                  h(GraphSection, { rows: graphRows, edges: view.edges ?? [], t, now, reduced: prefersReducedMotion(), hasPending: view.pending !== null && view.pending !== undefined }),
+                  h(GraphSection, { rows: graphRows, edges: view.edges ?? [], t, now, hasPending: graphBusy, completion }),
                   view.hiddenCommits > 0
                     ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
                     : null,
-                  // Conflict files are listed below the graph with amber badges.
-                  conflictRows.length > 0
-                    ? h(
-                        'div',
-                        { className: 'gcf-conflict-list', 'data-gcf': 'conflict-list' },
-                        conflictRows.map((row, index) =>
-                          h(
-                            'div',
-                            {
-                              key: row.id,
-                              className: 'gcf-row gcf-row--conflict',
-                              'data-gcf': 'conflict-row',
-                              tabIndex: 0,
-                              style: { '--gcf-i': String(index), '--rev': String(Math.max(0, conflictRows.length - 1 - index)) },
-                            },
-                            h('span', { className: 'gcf-badge', 'aria-hidden': true }, String(row.index)),
-                            h('span', { className: 'gcf-subject' }, row.path),
-                            h('span', { className: 'gcf-meta' }, h('code', null, row.code)),
-                            h(ConflictPeekPopover, {
-                              hunks: conflictPeekHunks ? (conflictPeekHunks[row.path] ?? null) : null,
-                              t,
-                            }),
-                          ),
-                        ),
-                      )
-                    : null,
+                  h(ConflictList, { rows: conflictRows, view, t, conflictPeekHunks, completion }),
                   Array.isArray(view.checks) && view.checks.length > 0
                     ? h(
                         'div',
@@ -2320,24 +2349,22 @@ body[data-ds-dark-theme] .gcf-dock {
                           'span',
                           { className: `gcf-foot-state is-${stateOf(view)}` },
                           h('i', null),
-                          view.counts.conflicts > 0
-                            ? format(t, 'foot.conflicts', { n: view.counts.conflicts })
-                            : statusText(view, t),
+                          h(ChangeText, { text: activityText(view, t, reviewing, sessionRunning) }),
                         ),
                     h(
                       'button',
                       {
                         type: 'button',
                         className: `gcf-action${view.counts.conflicts > 0 ? ' is-warn' : ''}`,
-                        disabled: reviewing || view.pending !== null || typeof onAction !== 'function'
+                        disabled: busy || typeof onAction !== 'function'
                           || (view.counts.conflicts === 0 && view.clean === true),
                         title: reviewing ? t('action.reviewing') : (view.pending !== null ? t('action.pending') : undefined),
                         'data-gcf': view.counts.conflicts > 0 ? 'resolve' : 'commit',
                         onClick: onAction,
                       },
-                      reviewing
-                        ? h('span', { className: 'gcf-action-spinner' }, h(Spinner))
-                        : (view.counts.conflicts > 0 ? t('action.resolve') : t('action.commit')),
+                      h('span', { className: `gcf-button-busy${busy ? ' is-visible' : ''}`, 'aria-hidden': !busy }, h(Spinner)),
+                      h(ChangeText, { text: busy ? t(view.pending?.phase === 'awaiting-approval' ? 'pending.awaiting' : 'action.resolving')
+                        : view.clean && completion?.outcome === 'succeeded' ? t('action.done') : view.counts.conflicts > 0 ? t('action.resolve') : t('action.commit') }),
                     ),
                   ),
                 ),
@@ -2356,7 +2383,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GitFlowDock({ projection, sessionId, t, sendReview }) {
+    function GitFlowDock({ projection, sessionId, t, sendReview, sessionStore }) {
       const subscribe = React.useCallback(
         (notify) => (projection === null || projection === undefined ? () => {} : projection.subscribe(notify)),
         [projection],
@@ -2366,6 +2393,9 @@ body[data-ds-dark-theme] .gcf-dock {
         [projection],
       );
       const projected = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+      const subscribeSession = React.useCallback((notify) => sessionStore?.subscribe(notify) ?? (() => {}), [sessionStore]);
+      const readRunning = React.useCallback(() => sessionStore?.getSnapshot()?.running === true, [sessionStore]);
+      const sessionRunning = React.useSyncExternalStore(subscribeSession, readRunning, () => false);
 
       // selectedRepo: name of the sub-repository the user drilled into, or null
       // for the container-level list.
@@ -2378,12 +2408,15 @@ body[data-ds-dark-theme] .gcf-dock {
       React.useEffect(() => {
         if (typeof document === 'undefined' || typeof fetch !== 'function') return () => {};
         let cancelled = false;
-        setLive(null);
+        let inFlight = false;
+        const controller = new AbortController();
 
         const load = async () => {
-          if (typeof document !== 'undefined' && document.hidden === true) return;
+          if (cancelled || inFlight || document.hidden === true) return;
+          inFlight = true;
           try {
             const response = await fetch(statusUrl(sessionId, selectedRepo), {
+              signal: controller.signal,
               headers: { accept: 'application/json' },
               cache: 'no-store',
             });
@@ -2395,19 +2428,20 @@ body[data-ds-dark-theme] .gcf-dock {
             if (!cancelled) setLive(payload);
           } catch {
             /* keep the last known value */
-          }
+          } finally { inFlight = false; }
         };
 
         load();
-        const timer = setInterval(load, POLL_MS);
+        const timer = setInterval(load, projected?.pending || sessionRunning ? 1000 : POLL_MS);
         const onFocus = () => load();
         window.addEventListener('focus', onFocus);
         return () => {
           cancelled = true;
           clearInterval(timer);
+          controller.abort();
           window.removeEventListener('focus', onFocus);
         };
-      }, [sessionId, selectedRepo]);
+      }, [sessionId, selectedRepo, projected?.revision, projected?.pending?.phase, sessionRunning]);
 
       const [collapsed, setCollapsed] = React.useState(() => readCollapsed(sessionId));
       React.useEffect(() => {
@@ -2431,11 +2465,12 @@ body[data-ds-dark-theme] .gcf-dock {
         setLive(null);
       }, []);
 
-      // Git facts come from polling, but activity belongs to the log projection.
-      // Do not keep a completed write spinning until an old HTTP response expires.
-      const view = live !== null && projected !== undefined && projected !== null
-        ? { ...live, pending: projected.pending ?? null }
-        : live ?? projected;
+      // Prefer the newest snapshot of THIS repository. Projection changes also
+      // trigger a fresh read, so tool completion never waits six seconds.
+      const sameRepo = live?.repoRoot && live.repoRoot === projected?.repoRoot;
+      const facts = sameRepo && (projected.readAt ?? 0) >= (live.readAt ?? 0) ? projected : live ?? (selectedRepo === null ? projected : null);
+      const view = facts && projected ? { ...facts, pending: projected.pending ?? null,
+        completion: sameRepo ? projected.completion ?? null : facts.completion ?? null } : facts;
 
       // onAction: the primary button (commit / resolve). Reads the review
       // payload for the repository on screen and injects it as a user
@@ -2506,13 +2541,14 @@ body[data-ds-dark-theme] .gcf-dock {
         }
       }, [sessionId, selectedRepo, sendReview, reviewing, t]);
 
-      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing, notice, onSelectRepo, onBack, selectedRepo, conflictPeekHunks });
+      return h(GitFlowView, { view, t, now: Date.now(), collapsed, onToggle: toggle, onAction, reviewing, notice, onSelectRepo, onBack, selectedRepo, conflictPeekHunks, sessionRunning });
     }
 
     return {
       inject: ['slots', 'locale', 'sessions'],
       /** Exposed for the contract smoke test; the module loader ignores extra fields. */
       components: { GitFlowView, GitFlowDock, GitFlowApproval },
+      motion: { graphTarget, interpolateGraph, motionEase, timings: MOTION },
       apply(ctx) {
         ctx.effect(
           () => ctx.locale.register(NS, { zh, en }),
@@ -2540,6 +2576,7 @@ body[data-ds-dark-theme] .gcf-dock {
                 const binding = ctx.sessions.binding(sessionId);
                 return {
                   sessionId,
+                  sessionStore: binding?.session ?? null,
                   projection:
                     binding === undefined
                       ? null

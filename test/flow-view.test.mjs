@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { MAX_CARD_COMMITS, buildGitFlowView, phaseOf, validateGitFlowView } from '../lib/flow/view.mjs';
+import { gitFlowStatusKey } from '../lib/flow/state.mjs';
 
 function snapshot(overrides = {}) {
   return {
@@ -26,8 +27,8 @@ function snapshot(overrides = {}) {
   };
 }
 
-function state(status, revision = 3) {
-  return { presence: status === null ? 'absent' : 'repo', status, revision, updatedAt: 9000 };
+function state(status, revision = 3, pending = null) {
+  return { pending, presence: status === null ? 'absent' : 'repo', status, revision, updatedAt: 9000 };
 }
 
 function commit(index) {
@@ -38,6 +39,22 @@ function commit(index) {
     subject: `Commit ${index}`,
   };
 }
+
+test('completion feedback expires when the worktree changes without a new HEAD', () => {
+  const clean = snapshot();
+  const completion = { action: 'merge', outcome: 'succeeded', repoRoot: clean.root,
+    head: clean.branch.oid, statusKey: gitFlowStatusKey(clean) };
+  assert.equal(buildGitFlowView({ ...state(clean), completion }).completion, completion);
+  const changed = snapshot({ clean: false, counts: { ...clean.counts, working: 1, unstaged: 1 } });
+  assert.equal(buildGitFlowView({ ...state(changed), completion }).completion, null);
+});
+
+test('a remaining conflict keeps its identity when the preceding file is resolved', () => {
+  const files = [{ path: 'a.ts', code: 'UU' }, { path: 'b.ts', code: 'UU' }];
+  const before = buildGitFlowView(state(snapshot({ conflicts: { files } })));
+  const after = buildGitFlowView(state(snapshot({ conflicts: { files: files.slice(1) } })));
+  assert.equal(before.conflictRows[1].id, after.conflictRows[0].id);
+});
 
 test('a clean repository yields a repo view without a working row', () => {
   const view = buildGitFlowView(state(snapshot({ recentCommits: [commit(1), commit(2)] })));
@@ -96,6 +113,23 @@ test('conflicts win over an in-flight operation and over plain changes', () => {
   assert.equal(phaseOf(snapshot({ operation: 'cherry-pick', clean: false })), 'cherry-pick');
 });
 
+test('paused merge facts never create an executing node before approval', () => {
+  const paused = snapshot({ operation: 'merge', clean: false,
+    counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 2, working: 2 } });
+  for (const pending of [null, { phase: 'awaiting-approval', action: 'merge', reason: '' },
+    { phase: 'awaiting-approval', action: 'resolve', reason: '' },
+    { phase: 'running', action: 'stage', reason: '' }]) {
+    const view = buildGitFlowView(state(paused, 3, pending));
+    assert.equal(view.operation, 'merge', 'keep the underlying repository fact');
+    assert.equal(view.rows.some((row) => row.kind === 'operation'), false);
+  }
+  const approved = buildGitFlowView(state(paused, 3, { phase: 'running', action: 'resolve', reason: '' }));
+  assert.equal(approved.rows[0].kind, 'operation');
+  assert.equal(approved.rows[0].action, 'resolve');
+  const aborting = buildGitFlowView(state(paused, 3, { phase: 'running', action: 'abort', reason: '' }));
+  assert.equal(aborting.rows[0].action, 'abort', 'an abort is not labelled as a merge');
+});
+
 test('only the newest commits are listed and the rest are counted', () => {
   const commits = Array.from({ length: MAX_CARD_COMMITS + 3 }, (_, index) => commit(index));
   const view = buildGitFlowView(state(snapshot({ recentCommits: commits })));
@@ -127,7 +161,7 @@ test('absent and unknown states yield minimal, distinct views', () => {
   assert.equal(validateGitFlowView(unknown).ok, true);
 });
 
-test('an operation row and numbered conflict rows are exposed', () => {
+test('an approved running operation and numbered conflict rows are exposed', () => {
   const view = buildGitFlowView(
     state(
       snapshot({
@@ -143,6 +177,8 @@ test('an operation row and numbered conflict rows are exposed', () => {
         },
         recentCommits: [],
       }),
+      3,
+      { phase: 'running', action: 'resolve', reason: 'Mark resolved files' },
     ),
   );
 

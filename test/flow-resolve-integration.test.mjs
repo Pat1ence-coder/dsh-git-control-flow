@@ -90,6 +90,10 @@ test('real merge: failed continuation clears pending, staged resolutions can ret
     assert.equal(completed.clean, true);
     assert.equal(state.pending, null);
     assert.equal(state.status.operation, null);
+    assert.equal(completed.write.previousHead, staged.branch.oid);
+    assert.equal(completed.write.head, completed.branch.oid);
+    assert.equal(completed.write.operation, 'merge');
+    assert.equal(state.completion, completed.write);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

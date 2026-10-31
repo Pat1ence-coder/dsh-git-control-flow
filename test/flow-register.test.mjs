@@ -29,7 +29,7 @@ function snapshot(overrides = {}) {
 }
 
 /** Minimal Cordis-like context that records what the plugin registers. */
-function harness({ readStatus, agents, connection, runGit, approval, discover, projectionState } = {}) {
+function harness({ readStatus, readStatusLight, agents, connection, runGit, approval, discover, projectionState } = {}) {
   const captured = {};
   const effects = [];
   const calls = [];
@@ -85,6 +85,7 @@ function harness({ readStatus, agents, connection, runGit, approval, discover, p
 
   const deps = {
     defineTool: (options) => options,
+    readStatusLight,
     readStatus:
       readStatus ??
       (async (directory, options) => {
@@ -258,6 +259,44 @@ test('the status route omits pending when the projection has none', async () => 
     new Request('http://local/api/git-flow.status?sessionId=s'),
   );
   assert.equal((await response.json()).pending, null);
+});
+
+test('polling refreshes the graph after a HEAD or repository change', async () => {
+  for (const changed of ['head', 'root', 'branch']) {
+    const old = snapshot({ graph: [{ short: 'old', sha: 'old', lane: 0, parents: [], refs: [] }] });
+    const current = snapshot({
+      root: changed === 'root' ? '/repo/other' : old.root,
+      branch: { ...old.branch, oid: changed === 'head' ? 'new' : old.branch.oid, name: changed === 'branch' ? 'other' : 'main' },
+      graph: [{ short: 'new', sha: 'new', lane: 0, parents: [], refs: [] }],
+    });
+    let fullReads = 0;
+    const { captured } = harness({
+      agents: { get: () => ({ session: { cwd: '/repo' } }) }, connection: {},
+      projectionState: { presence: 'repo', status: old, pending: null },
+      readStatusLight: async () => ({ ...current, graph: [] }),
+      readStatus: async () => { fullReads += 1; return current; },
+    });
+    const response = await captured.route.fetch(new Request('http://local/api/git-flow.status?sessionId=s'));
+    const view = await response.json();
+    assert.equal(fullReads, 1, changed);
+    assert.equal(view.repoRoot, current.root);
+    assert.equal(view.rows.find((row) => row.kind === 'commit').id, 'new');
+  }
+});
+
+test('an unchanged repository carries its graph and completion through a light poll', async () => {
+  const old = snapshot({ graph: [{ short: 'old', sha: 'old', lane: 0, parents: [], refs: [] }] });
+  const completion = { action: 'merge', outcome: 'succeeded', repoRoot: '/repo', head: old.branch.oid };
+  const { captured } = harness({
+    agents: { get: () => ({ session: { cwd: '/repo' } }) }, connection: {},
+    projectionState: { presence: 'repo', status: old, pending: null, completion },
+    readStatusLight: async () => snapshot(),
+    readStatus: async () => { throw new Error('unnecessary full read'); },
+  });
+  const response = await captured.route.fetch(new Request('http://local/api/git-flow.status?sessionId=s'));
+  const view = await response.json();
+  assert.equal(view.rows[0].id, 'old');
+  assert.deepEqual(view.completion, completion);
 });
 
 test('the status route rejects a missing or unknown session', async () => {

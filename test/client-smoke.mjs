@@ -67,6 +67,7 @@ const reactStub = {
   useEffect() {
     // Effects drive rAF/animation; the contract test asserts the static tree.
   },
+  useLayoutEffect() {},
   useRef(initial) {
     return { current: initial };
   },

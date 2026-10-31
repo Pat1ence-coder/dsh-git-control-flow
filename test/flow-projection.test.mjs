@@ -64,7 +64,7 @@ test('the projection exposes the registered key, version and a cached card view'
   assert.equal(projection.stateVersion, GIT_FLOW_STATE_VERSION);
 
   const state = projection.init({}, 0);
-  assert.deepEqual(state, { presence: 'unknown', status: null, revision: 0, updatedAt: null, pending: null });
+  assert.deepEqual(state, { presence: 'unknown', status: null, revision: 0, updatedAt: null, pending: null, completion: null });
 
   const view = projection.wire.view(state);
   assert.deepEqual(view, { presence: 'unknown', revision: 0, updatedAt: null, pending: null });
@@ -193,6 +193,18 @@ test('a thrown or cancelled tool clears activity even without gitFlow metadata',
   });
   assert.equal(after.pending, null);
   assert.equal(after.status, before.status);
+  assert.equal(after.completion.outcome, 'failed');
+});
+
+test('write completion carries verified HEAD and operation for animation, and a new approval clears it', () => {
+  const write = { id: 'call-1', action: 'resolve', outcome: 'succeeded', repoRoot: '/repo',
+    operation: 'merge', previousHead: 'a', head: 'b' };
+  const completed = applyGitFlowEvent(runningResolve(), resultEvent(snapshot({ write })));
+  assert.equal(completed.completion, write);
+  assert.equal(createGitFlowProjection().wire.view(completed).completion, write);
+  assert.equal(applyGitFlowEvent(completed, {
+    type: 'approval/asked', data: { id: 'new', callId: 'new', toolName: 'git_flow', reason: 'Stage files' },
+  }).completion, null);
 });
 
 test('unrelated decisions and tool results cannot settle an active resolve', () => {
