@@ -130,31 +130,18 @@ const ctx = {
 
 plugin.apply(ctx);
 
-check(injectedSlots.length === 2, `injected slots: ${injectedSlots.join(',')}`);
+check(injectedSlots.length === 1, `injected slots: ${injectedSlots.join(',')}`);
 check(injectedSlots.includes('conversation.input.dock'), 'the dock slot must be injected');
-check(injectedSlots.includes('conversation.composer'), 'the composer slot must be injected');
-check(registered.length === 2, `expected 2 slot registrations, got ${registered.length}`);
+check(registered.length === 1, `expected 1 slot registration, got ${registered.length}`);
 
 const entry = registered.find((item) => item.options.name === 'conversation.input.dock');
-const approvalEntry = registered.find((item) => item.options.name === 'conversation.composer');
+
 check(entry?.options?.name === 'conversation.input.dock', 'slot name must be conversation.input.dock');
 check(entry?.options?.id === 'git-control-flow', `slot id is ${entry?.options?.id}`);
 check(entry?.options?.order === 10, `slot order is ${entry?.options?.order}`);
 check(entry?.options?.locale === 'gitControlFlow', `slot locale is ${entry?.options?.locale}`);
 check(typeof entry?.options?.inject === 'function', 'slot registration must inject props');
 check(entry?.Component === plugin.components.GitFlowDock, 'the dock component must be registered');
-check(approvalEntry?.Component === plugin.components.GitFlowApproval, 'the approval component must be registered');
-check(
-  approvalEntry?.options?.priority === 0.5,
-  'the approval takeover must be tried before the stock panel (priority 1)',
-);
-
-const select = approvalEntry?.options?.select;
-const ourApproval = { kind: 'approval', toolName: 'git_flow', reason: 'Stage 1 path(s)' };
-check(select?.({ pendingInteraction: ourApproval }) === ourApproval, 'our approval is selected');
-check(select?.({ pendingInteraction: { kind: 'approval', toolName: 'bash' } }) === null, 'other approvals keep the stock panel');
-check(select?.({ pendingInteraction: { kind: 'question', toolName: 'git_flow' } }) === null, 'only approvals are taken over');
-check(select?.({ pendingInteraction: null }) === null, 'no pending interaction selects nothing');
 
 const props = entry?.options?.inject?.('session-test');
 check(props?.projection === null, 'a missing session binding injects a null projection');
@@ -395,6 +382,22 @@ const runningPending = render({
   pending: { phase: 'running', action: 'commit', reason: 'Commit 1 staged file(s) on main.' },
 });
 check(runningPending.includes('pending.running'), 'a running write is labelled as running');
+
+// A poll response may still contain the pending state from before tool/result.
+// The subscribed projection must stop the spinner immediately.
+const originalUseState = reactStub.useState;
+let dockStateIndex = 0;
+reactStub.useState = (initial) => {
+  dockStateIndex += 1;
+  if (dockStateIndex === 2) return [{ ...dirtyView, pending: { ...pendingWrite, phase: 'running' } }, () => {}];
+  return originalUseState(initial);
+};
+const settledDock = JSON.stringify(plugin.components.GitFlowDock({
+  t, sessionId: 'session-test',
+  projection: { subscribe: () => () => {}, getSnapshot: () => ({ ...dirtyView, pending: null }) },
+}));
+reactStub.useState = originalUseState;
+check(!settledDock.includes('gcf-pending'), 'a stale HTTP response cannot keep a completed write spinning');
 
 const { GitFlowApproval } = plugin.components;
 const answers = [];

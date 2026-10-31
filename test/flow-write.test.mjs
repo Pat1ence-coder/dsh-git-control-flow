@@ -329,8 +329,8 @@ test('resolve approval reason names the operation and the resolved files', () =>
 });
 
 test('continue argv covers merge and rebase', () => {
-  assert.deepEqual(continueArgv('merge'), ['merge', '--continue', '--no-edit']);
-  assert.deepEqual(continueArgv('rebase'), ['rebase', '--continue', '--no-edit']);
+  assert.deepEqual(continueArgv('merge'), ['merge', '--continue']);
+  assert.deepEqual(continueArgv('rebase'), ['rebase', '--continue']);
 });
 
 test('resolve stages the paths and continues the operation', async () => {
@@ -347,8 +347,31 @@ test('resolve stages the paths and continues the operation', async () => {
   assert.match(captured.approvals[0].reason, /Mark 1 conflict file/);
   assert.equal(captured.git.length, 2);
   assert.deepEqual(captured.git[0].argv, ['add', '--', 'src/a.ts']);
-  assert.deepEqual(captured.git[1].argv, ['merge', '--continue', '--no-edit']);
+  assert.deepEqual(captured.git[1].argv, ['merge', '--continue']);
+  assert.equal(captured.git[1].options.env.GIT_EDITOR, 'true');
+  assert.equal(captured.git[1].options.env.PATH, process.env.PATH);
+  assert.equal(captured.git[1].options.env.GIT_TERMINAL_PROMPT, '0');
   assert.equal(value.kind, 'git-status');
+});
+
+test('resolve can retry after staging succeeded but continue failed', async () => {
+  const staged = snapshot({
+    operation: 'merge',
+    staged: { count: 1, files: [{ path: 'src/a.ts' }] },
+    counts: { staged: 1, unstaged: 0, untracked: 0, conflicts: 0, working: 1 },
+  });
+  const captured = harness({ approval: 'allowed-once', statuses: [staged, snapshot()] });
+  const value = await captured.tool.execute({ action: 'resolve', paths: ['src/a.ts'] }, exec);
+  assert.equal(captured.approvals.length, 1);
+  assert.deepEqual(captured.git.map(({ argv }) => argv), [
+    ['add', '--', 'src/a.ts'], ['merge', '--continue'],
+  ]);
+  assert.equal(value.kind, 'git-status');
+  assert.equal(value.operation, null);
+
+  const denied = harness({ approval: 'rejected', statuses: [staged] });
+  assert.equal((await denied.tool.execute({ action: 'resolve', paths: ['src/a.ts'] }, exec)).kind, 'rejected');
+  assert.equal(denied.git.length, 0);
 });
 
 test('resolve with no operation returns nothing-to-resolve', async () => {

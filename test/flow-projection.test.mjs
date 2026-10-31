@@ -126,6 +126,8 @@ test('the approval audit pair drives the pending write shown by the card', () =>
     data: { id: 'a1', toolName: 'git_flow', reason: 'Stage 1 path(s) in test: a.ts' },
   });
   assert.deepEqual(asked.pending, {
+    approvalId: 'a1',
+    callId: null,
     phase: 'awaiting-approval',
     action: 'stage',
     reason: 'Stage 1 path(s) in test: a.ts',
@@ -156,6 +158,72 @@ test('the approval audit pair drives the pending write shown by the card', () =>
   const settled = projection.apply(allowed, resultEvent(snapshot({ staged: { count: 1, files: [] } }), 13));
   assert.equal(settled.pending, null);
   assert.equal(settled.presence, 'repo');
+});
+
+function runningResolve() {
+  let state = applyGitFlowEvent(initialGitFlowState(), resultEvent(snapshot()));
+  state = applyGitFlowEvent(state, {
+    type: 'approval/asked',
+    data: { id: 'resolve-approval', callId: 'call-1', toolName: 'git_flow', reason: 'Mark 1 conflict file(s) as resolved' },
+  });
+  return applyGitFlowEvent(state, {
+    type: 'approval/decided', data: { id: 'resolve-approval', outcome: 'allowed-once' },
+  });
+}
+
+test('failed, rejected and no-op results settle the matching write without losing Git facts', () => {
+  for (const kind of ['failed', 'rejected', 'nothing-to-resolve', 'no-conflicts']) {
+    const before = runningResolve();
+    assert.equal(before.pending.action, 'resolve');
+    const result = resultEvent({ kind, action: 'resolve' });
+    result.data.message = { role: 'tool', source: { kind: 'tool', callId: 'call-1' }, content: [] };
+    const after = applyGitFlowEvent(before, result);
+    assert.equal(after.pending, null, kind);
+    assert.equal(after.status, before.status);
+    assert.equal(after.revision, before.revision);
+    assert.equal(createGitFlowProjection().wire.view(after).pending, null);
+  }
+});
+
+test('a thrown or cancelled tool clears activity even without gitFlow metadata', () => {
+  const before = runningResolve();
+  const after = applyGitFlowEvent(before, {
+    type: 'tool/result',
+    data: { message: { source: { kind: 'tool', callId: 'call-1' }, isError: true, content: [] } },
+  });
+  assert.equal(after.pending, null);
+  assert.equal(after.status, before.status);
+});
+
+test('unrelated decisions and tool results cannot settle an active resolve', () => {
+  const before = runningResolve();
+  for (const outcome of ['rejected', 'allowed-once']) {
+    assert.equal(applyGitFlowEvent(before, {
+      type: 'approval/decided', data: { id: 'another-approval', outcome },
+    }), before);
+  }
+  const unrelated = resultEvent({ kind: 'failed' });
+  unrelated.data.message.toolCallId = 'another-call';
+  assert.equal(applyGitFlowEvent(before, unrelated), before);
+  const read = resultEvent(snapshot());
+  read.data.message.toolCallId = 'status-call';
+  assert.equal(applyGitFlowEvent(before, read).pending, before.pending);
+});
+
+test('turn end settles abandoned activity and old failed logs replay without a spinner', () => {
+  for (const reason of ['completed', 'cancelled', 'error']) {
+    const after = applyGitFlowEvent(runningResolve(), { type: 'turn/end', data: { turn: 1, reason } });
+    assert.equal(after.pending, null);
+    assert.equal(applyGitFlowEvent(after, { type: 'turn/end', data: {} }), after);
+  }
+  // Earlier approval records may omit callId. Their failure metadata is enough.
+  const asked = applyGitFlowEvent(initialGitFlowState(), {
+    type: 'approval/asked', data: { id: 'old', toolName: 'git_flow', reason: 'Mark 1 conflict file(s)' },
+  });
+  const allowed = applyGitFlowEvent(asked, {
+    type: 'approval/decided', data: { id: 'old', outcome: 'allowed-once' },
+  });
+  assert.equal(applyGitFlowEvent(allowed, resultEvent({ kind: 'failed' })).pending, null);
 });
 
 test('the wire view survives a JSON round trip whole', () => {

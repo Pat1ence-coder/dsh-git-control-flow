@@ -49,26 +49,54 @@ window.__ModuleLoader__.load({
       const lang = document.documentElement.lang || 'zh';
       const zh = lang.startsWith('zh');
       const lines = [];
-      const fence = (body, info = '') => {
-        lines.push('', '```' + info, body, '```');
-      };
 
       if (payload.kind === 'conflicts') {
         const op = payload.operation ?? 'merge';
         if (zh) {
-          lines.push(`请帮我解决当前 ${op} 中的冲突：`);
-          lines.push('1. 阅读下面的冲突内容，判断每个文件该保留哪一侧或如何合并两侧，有拿不准的地方先问我；');
-          lines.push('2. 编辑这些文件，去掉全部冲突标记（<<<<<<< / ======= / >>>>>>>）；');
-          lines.push('3. 检查合并结果里没有敏感信息或明显风险；');
-          lines.push('4. 调用 git_flow 的 resolve 动作，paths 填已解决的文件（会弹出审批）。');
+          lines.push(`请帮我解决当前 ${op} 中的冲突。`);
+          lines.push('');
+          lines.push('操作步骤：');
+          lines.push('1. 用 git_flow 的 status 动作查看当前仓库状态，确认冲突文件列表；');
+          lines.push('2. 逐一读取冲突文件，找到 <<<<<<<、=======、>>>>>>> 标记，理解两侧意图；');
+          lines.push('3. 有拿不准的地方先问我，不要猜；');
+          lines.push('4. 直接编辑文件，去掉全部冲突标记，保留正确内容；');
+          lines.push('5. 检查合并结果中没有敏感信息；');
+          lines.push('6. 调用 git_flow 的 resolve 动作（会弹出审批）。');
         } else {
-          lines.push(`Please help me resolve the conflicts in the current ${op}:`);
-          lines.push('1. Read the conflicts below and decide, per file, which side to keep or how to combine them — ask me if anything is unclear;');
-          lines.push('2. Edit the files to remove every conflict marker (<<<<<<< / ======= / >>>>>>>);');
-          lines.push('3. Check the merged result for sensitive information or obvious risks;');
-          lines.push('4. Call git_flow with action "resolve" and the resolved files as paths (this asks for approval).');
+          lines.push(`Please help me resolve the conflicts in the current ${op}.`);
+          lines.push('');
+          lines.push('Steps:');
+          lines.push('1. Call git_flow status to check the current state and confirm the conflicted files;');
+          lines.push('2. Read each conflicted file and understand both sides (<<<<<<< / ======= / >>>>>>>);');
+          lines.push('3. Ask me if anything is unclear — do not guess;');
+          lines.push('4. Edit the files to resolve each conflict and remove all markers;');
+          lines.push('5. Check that no sensitive information is exposed in the merged result;');
+          lines.push('6. Call git_flow resolve (this asks for approval).');
         }
-      } else if (payload.scope === 'working') {
+        lines.push('');
+        lines.push(zh
+          ? '要求：commit message 不得包含密钥、令牌、内部地址或个人信息；不要 push。'
+          : 'Rules: no keys, tokens, internal addresses or personal information in the commit message; do not push.');
+        if (payload.author && (payload.author.name === null || payload.author.email === null)) {
+          lines.push(zh
+            ? '⚠️ 注意：git config 中未配置 user.name 或 user.email，提交前请先询问我。'
+            : '⚠️ Note: git config user.name or user.email is not set. Please ask me for these before committing.');
+        }
+        lines.push('');
+        const branch = payload.branch ?? (zh ? '游离 HEAD' : 'detached HEAD');
+        if (typeof repo === 'string' && repo !== '') {
+          lines.push(zh
+            ? `仓库：${repo}（调用 git_flow 时请传 repo: "${repo}"）`
+            : `Repository: ${repo} (pass repo: "${repo}" to git_flow)`);
+        }
+        lines.push(zh
+          ? `分支：${branch}，${payload.conflictCount} 个冲突文件`
+          : `Branch: ${branch}, ${payload.conflictCount} conflicted file(s)`);
+        return lines.join('\n');
+      }
+
+      // staged / working
+      if (payload.scope === 'working') {
         lines.push(zh
           ? '请帮我 review 下面尚未暂存的改动和未跟踪文件，检查是否有敏感信息或风险。确认后用 git_flow 的 stage 暂存应该提交的文件（不该提交的请列出并说明原因），再生成合适的 commit message 并 commit。'
           : 'Please review the unstaged changes and untracked files below for sensitive information or risks. Then stage what should be committed with git_flow "stage" (list anything that should not be committed, and why), write an appropriate commit message and commit.');
@@ -77,7 +105,6 @@ window.__ModuleLoader__.load({
           ? '请帮我 review 以下暂存的改动，检查是否有敏感信息或风险，然后生成合适的 commit message 并提交。'
           : 'Please review the following staged changes, check for any sensitive information or risks, then generate an appropriate commit message and commit.');
       }
-
       lines.push('');
       lines.push(zh
         ? '要求：commit message 不得包含密钥、令牌、内部地址或个人信息；不要 push。'
@@ -87,7 +114,6 @@ window.__ModuleLoader__.load({
           ? '⚠️ 注意：git config 中未配置 user.name 或 user.email，提交前请先询问我。'
           : '⚠️ Note: git config user.name or user.email is not set. Please ask me for these before committing.');
       }
-
       lines.push('');
       if (typeof repo === 'string' && repo !== '') {
         lines.push(zh
@@ -95,37 +121,29 @@ window.__ModuleLoader__.load({
           : `Repository: ${repo} (pass repo: "${repo}" to git_flow)`);
       }
       const branch = payload.branch ?? (zh ? '游离 HEAD' : 'detached HEAD');
-      if (payload.kind === 'conflicts') {
-        lines.push(zh
-          ? `分支：${branch}，${payload.conflictCount} 个冲突文件`
-          : `Branch: ${branch}, ${payload.conflictCount} conflicted file(s)`);
-        const more = payload.moreFiles > 0 ? [zh ? `… 另有 ${payload.moreFiles} 个` : `… ${payload.moreFiles} more`] : [];
-        fence([...payload.files, ...more].join('\n'));
-      } else if (payload.scope === 'working') {
+      if (payload.scope === 'working') {
         lines.push(zh
           ? `分支：${branch}，${payload.workingCount} 个文件有改动（尚未暂存）`
           : `Branch: ${branch}, ${payload.workingCount} changed file(s) (nothing staged yet)`);
-        if (payload.stat) fence(payload.stat);
+        if (payload.stat) { lines.push('', '\`\`\`', payload.stat, '\`\`\`'); }
         if (payload.untracked.length > 0) {
           lines.push('', zh ? '**未跟踪文件：**' : '**Untracked files:**');
           const more = payload.moreUntracked > 0 ? [zh ? `… 另有 ${payload.moreUntracked} 个` : `… ${payload.moreUntracked} more`] : [];
-          fence([...payload.untracked, ...more].join('\n'));
+          lines.push('\`\`\`'); lines.push([...payload.untracked, ...more].join('\n')); lines.push('\`\`\`');
         }
       } else {
         lines.push(zh
           ? `分支：${branch}，已暂存 ${payload.stagedCount} 个文件`
           : `Branch: ${branch}, ${payload.stagedCount} staged file(s)`);
-        if (payload.stat) fence(payload.stat);
+        if (payload.stat) { lines.push('', '\`\`\`', payload.stat, '\`\`\`'); }
       }
-
       if (payload.patch) {
         lines.push('', zh ? '**改动内容（已过滤疑似敏感行）：**' : '**Diff (secret-looking lines redacted):**');
-        fence(payload.patch, 'diff');
+        lines.push('', '\`\`\`diff', payload.patch, '\`\`\`');
       }
       if (payload.truncated) {
         lines.push('', zh ? '_（diff 过大，已截断）_' : '_(diff truncated — too large)_');
       }
-
       return lines.join('\n');
     }
 
@@ -305,7 +323,7 @@ window.__ModuleLoader__.load({
       };
 
       const pending = view?.pending ?? { phase: 'awaiting-approval', action: null, reason: reason === '' ? null : reason };
-      const approvalRows = view === null ? [] : [...view.rows];
+      const approvalRows = view === null || view.presence !== 'repo' ? [] : [...(view.rows ?? [])];
       const approvalHeight = approvalRows.length * ROW_HEIGHT;
 
       return h(
@@ -328,7 +346,13 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'gcf-title' }, t('app.title')),
               ),
           h(PendingLine, { pending, t }),
-          reason !== '' ? h('div', { className: 'gcf-approval-reason' }, reason) : null,
+          reason !== '' ? h(
+            'div',
+            { className: 'gcf-approval-reason' },
+            // Show only the first 2 lines of the reason — the full text is the
+            // review message which can be very long.
+            reason.split('\n').slice(0, 2).join('\n').slice(0, 200) + (reason.length > 200 ? '…' : ''),
+          ) : null,
           view !== null && approvalRows.length > 0
             ? h(
                 'div',
@@ -541,6 +565,25 @@ window.__ModuleLoader__.load({
 @keyframes gcf-ripple {
   0% { transform: scale(1); opacity: 0.55; }
   70%, 100% { transform: scale(1.15); opacity: 0; }
+}
+/* Spinning arc on SVG nodes when a write is pending */
+@keyframes gcf-ring-spin {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -28; }
+}
+.gcf-node-arc {
+  transform-origin: 0 0;
+  animation: gcf-ring-spin 0.9s linear infinite;
+  stroke: var(--c, #4a7fdc);
+  stroke-width: 1.5;
+  fill: none;
+  stroke-linecap: round;
+  stroke-dasharray: 8 20;
+  opacity: 0.9;
+}
+.gcf-node-arc-warn { stroke: var(--warn, #e3a21a); }
+@media (prefers-reduced-motion: reduce) {
+  .gcf-node-arc { animation: none; stroke-dashoffset: 0; }
 }
 .gcf-graph { position: relative; overflow: visible; }
 .gcf-graph > .gcf-rows {
@@ -1781,13 +1824,13 @@ body[data-ds-dark-theme] .gcf-dock {
       return ordered;
     }
 
-    function GraphSection({ rows, edges, t, now, reduced }) {
+    function GraphSection({ rows, edges, t, now, reduced, hasPending = false }) {
       const entries = useStableRows(rows, reduced);
       const graphHeight = rows.length * ROW_HEIGHT;
       return h(
         'div',
         { className: 'gcf-graph', style: { height: `${graphHeight}px` } },
-        h(GraphRail, { rows, edges }),
+        h(GraphRail, { rows, edges, hasPending }),
         h(
           'div',
           { className: 'gcf-rows', 'data-gcf': 'rows' },
@@ -1808,7 +1851,7 @@ body[data-ds-dark-theme] .gcf-dock {
       );
     }
 
-    function GraphRail({ rows, edges }) {
+    function GraphRail({ rows, edges, hasPending = false }) {
       const commits = rows.filter((row) => row.kind === 'commit');
       const maxLane = Math.max(0, ...commits.map((row) => (Number.isInteger(row.lane) ? row.lane : 0)));
       const width = LANE_X0 * 2 + (maxLane + 1) * LANE_WIDTH;
@@ -1847,14 +1890,15 @@ body[data-ds-dark-theme] .gcf-dock {
           if (row.kind === 'working' || row.kind === 'operation') {
             const cx = x(0), cy = y(index);
             if (row.kind === 'operation') {
-              // Merge/rebase in-progress: filled amber dot with white halo
+              // Merge/rebase in-progress: filled amber dot with white halo + optional spinning arc
               const fill = row.operation === 'merge' ? 'var(--warn, #e3a21a)' : 'var(--base, #bdbdbd)';
               nodeParts.push(h('g', { key: `n${row.id}`, transform: `translate(${cx} ${cy})` },
                 h('circle', { r: 9, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
                 h('circle', { r: 6, fill }),
+                hasPending ? h('circle', { className: 'gcf-node-arc gcf-node-arc-warn', r: 10, strokeDasharray: '10 22' }) : null,
               ));
             } else {
-              // Working changes: hollow dashed ring with white background halo
+              // Working changes: hollow dashed ring with white background halo + optional spinning arc
               nodeParts.push(h('g', { key: `n${row.id}`, transform: `translate(${cx} ${cy})` },
                 h('circle', { r: 7, fill: 'var(--dsw-alias-bg-layer-1, #fff)' }),
                 h('circle', {
@@ -1863,6 +1907,7 @@ body[data-ds-dark-theme] .gcf-dock {
                   strokeWidth: 1.5,
                   strokeDasharray: '3 3',
                 }),
+                hasPending ? h('circle', { className: 'gcf-node-arc', r: 9, strokeDasharray: '10 22' }) : null,
               ));
             }
           }
@@ -2222,7 +2267,7 @@ body[data-ds-dark-theme] .gcf-dock {
                 h(
                   'div',
                   { className: 'gcf-body-inner' },
-                  h(GraphSection, { rows: graphRows, edges: view.edges ?? [], t, now, reduced: prefersReducedMotion() }),
+                  h(GraphSection, { rows: graphRows, edges: view.edges ?? [], t, now, reduced: prefersReducedMotion(), hasPending: view.pending !== null && view.pending !== undefined }),
                   view.hiddenCommits > 0
                     ? h('div', { className: 'gcf-more' }, format(t, 'rows.more', { n: view.hiddenCommits }))
                     : null,
@@ -2386,7 +2431,11 @@ body[data-ds-dark-theme] .gcf-dock {
         setLive(null);
       }, []);
 
-      const view = live ?? projected;
+      // Git facts come from polling, but activity belongs to the log projection.
+      // Do not keep a completed write spinning until an old HTTP response expires.
+      const view = live !== null && projected !== undefined && projected !== null
+        ? { ...live, pending: projected.pending ?? null }
+        : live ?? projected;
 
       // onAction: the primary button (commit / resolve). Reads the review
       // payload for the repository on screen and injects it as a user
@@ -2504,27 +2553,6 @@ body[data-ds-dark-theme] .gcf-dock {
               },
             },
             GitFlowDock,
-          ),
-        );
-        // Take over the composer only for our own approvals: the card carries
-        // the decision, so it stays in place and the chat area makes room for
-        // it instead of the stock panel replacing the input area.
-        ctx.slots.inject('conversation.composer', () =>
-          ctx.slots.register(
-            {
-              name: 'conversation.composer',
-              // Chain entries are tried in ascending priority and the first
-              // non-null selection wins; the stock approval panel sits at 1,
-              // so ours has to be tried before it.
-              priority: 0.5,
-              locale: NS,
-              select: ({ pendingInteraction }) => {
-                if (pendingInteraction === null || pendingInteraction === undefined) return null;
-                if (pendingInteraction.kind !== 'approval') return null;
-                return pendingInteraction.toolName === 'git_flow' ? pendingInteraction : null;
-              },
-            },
-            GitFlowApproval,
           ),
         );
       },
