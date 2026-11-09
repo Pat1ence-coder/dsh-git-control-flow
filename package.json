@@ -13,6 +13,7 @@
   "files": [
     "index.js",
     "client.js",
+    "lib/",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg"
@@ -22,10 +23,11 @@
     "test": "node --test test/*.test.mjs && node test/client-smoke.mjs"
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.2"
+    "dsh": ">=0.2.1-rc.5"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "*"
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-sandbox": "*"
   },
   "dsh": {
     "bundle": {

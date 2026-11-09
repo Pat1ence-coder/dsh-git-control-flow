@@ -10,7 +10,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { discoverRepositories, parseBranchLine } from '../lib/git/discover.mjs';
-import { runGit } from '../lib/git/exec.mjs';
+import { runGit } from './support/git.mjs';
 
 const ROOT = join(process.cwd(), '.tmp', 'discover');
 mkdirSync(ROOT, { recursive: true });

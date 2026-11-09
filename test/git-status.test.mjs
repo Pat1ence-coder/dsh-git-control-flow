@@ -11,8 +11,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { readGitStatus, resolveRepoRoot } from '../lib/git/status.mjs';
-import { gitEnvironment } from '../lib/git/exec.mjs';
+import { readGitStatus, resolveRepoRoot } from './support/git.mjs';
+import { gitEnvironment } from './support/git.mjs';
 
 const ROOT = join(process.cwd(), '.tmp', 'tests');
 mkdirSync(ROOT, { recursive: true });

@@ -8,8 +8,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { runGit } from '../lib/git/exec.mjs';
-import { readGitStatus } from '../lib/git/status.mjs';
+import { runGit } from './support/git.mjs';
+import { readGitStatus } from './support/git.mjs';
 import { DIFF_LIMIT, REVIEW_FILE_LIMIT, filterSensitive, readReviewPayload } from '../lib/flow/review.mjs';
 
 function snapshot(overrides = {}) {

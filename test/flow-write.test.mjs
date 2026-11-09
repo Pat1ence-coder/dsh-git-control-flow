@@ -44,7 +44,7 @@ function snapshot(overrides = {}) {
   };
 }
 
-function harness({ statuses, runGit, approval } = {}) {
+function harness({ statuses, runGit, approval, prepareWrite, approvalTimeoutMs } = {}) {
   const captured = { approvals: [], git: [], statuses: [] };
   const queue = Array.isArray(statuses) ? [...statuses] : null;
 
@@ -72,13 +72,15 @@ function harness({ statuses, runGit, approval } = {}) {
     ctx.approval = {
       async request(request) {
         captured.approvals.push(request);
-        return approval;
+        return typeof approval === 'function' ? approval(request) : approval;
       },
     };
   }
 
   const deps = {
     defineTool: (options) => options,
+    prepareWrite,
+    approvalTimeoutMs,
     readStatus: async (directory) => {
       captured.statuses.push(directory);
       if (queue === null) return snapshot({ root: directory });
@@ -86,7 +88,7 @@ function harness({ statuses, runGit, approval } = {}) {
     },
     runGit: async (root, argv, options) => {
       captured.git.push({ root, argv, options });
-      return runGit === undefined ? { code: 0, stdout: '', stderr: '' } : runGit(root, argv);
+      return runGit === undefined ? { code: 0, stdout: '', stderr: '' } : runGit(root, argv, options);
     },
   };
 
@@ -349,7 +351,7 @@ test('resolve stages the paths and continues the operation', async () => {
   assert.deepEqual(captured.git[0].argv, ['add', '--', 'src/a.ts']);
   assert.deepEqual(captured.git[1].argv, ['merge', '--continue']);
   assert.equal(captured.git[1].options.env.GIT_EDITOR, 'true');
-  assert.equal(captured.git[1].options.env.PATH, process.env.PATH);
+  assert.equal(Object.hasOwn(captured.git[1].options.env, 'PATH'), false, 'environment overrides do not copy the ambient environment');
   assert.equal(captured.git[1].options.env.GIT_TERMINAL_PROMPT, '0');
   assert.equal(value.kind, 'git-status');
 });
@@ -515,4 +517,71 @@ test('normalizeRepo: rejects absolute paths', () => {
 test('normalizeRepo: rejects parent traversal', () => {
   assert.equal(normalizeRepo('foo/../../../etc').ok, false);
   assert.match(normalizeRepo('foo/../../../etc').reason, /escape/);
+});
+
+test('an approval timeout is bounded even when the answerer ignores its signal; late approval cannot write', async () => {
+  let allowLater;
+  const captured = harness({ approvalTimeoutMs: 15,
+    approval: () => new Promise((resolve) => { allowLater = resolve; }) });
+  const value = await captured.tool.execute({ action: 'stage', all: true }, exec);
+  assert.equal(value.kind, 'rejected');
+  assert.equal(value.outcome, 'rejected');
+  assert.equal(captured.approvals[0].signal.aborted, true);
+  allowLater('allowed-once');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(captured.git.length, 0);
+});
+
+test('caller cancellation withdraws approval without waiting for its timeout', async () => {
+  const controller = new AbortController();
+  const captured = harness({ approvalTimeoutMs: 1000,
+    approval: () => { setImmediate(() => controller.abort()); return new Promise(() => {}); } });
+  const value = await captured.tool.execute({ action: 'stage', all: true }, { ...exec, signal: controller.signal });
+  assert.equal(value.outcome, 'cancelled');
+  assert.equal(captured.approvals[0].signal.aborted, true);
+  assert.equal(captured.git.length, 0);
+});
+
+test('sandbox preflight rejection occurs before approval and never launches a write', async () => {
+  const captured = harness({ approval: 'allowed-once', prepareWrite: async () => { throw new Error('read-only policy'); } });
+  await assert.rejects(captured.tool.execute({ action: 'stage', all: true }, exec), /read-only policy/);
+  assert.equal(captured.approvals.length, 0);
+  assert.equal(captured.git.length, 0);
+});
+
+test('cancellation after add preserves its result and prevents resolve continuation', async () => {
+  const controller = new AbortController();
+  const captured = harness({ approval: 'allowed-once',
+    statuses: [snapshot({ operation: 'merge', counts: { staged: 0, unstaged: 0, untracked: 0, conflicts: 1, working: 1 } })],
+    runGit: (_root, argv, options) => {
+      assert.equal(options.session, agent.session);
+      assert.equal(options.write, true);
+      assert.equal(argv[0], 'add');
+      controller.abort();
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  await assert.rejects(captured.tool.execute({ action: 'resolve', paths: ['a.ts'] }, { ...exec, signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(captured.git.length, 1, 'no continue or automatic rollback is attempted');
+});
+
+test('a cancelled request never opens approval even if its status reader ignores cancellation', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const captured = harness({ approval: 'allowed-once' });
+  await assert.rejects(captured.tool.execute({ action: 'stage', all: true }, { ...exec, signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(captured.approvals.length, 0);
+  assert.equal(captured.git.length, 0);
+});
+
+test('a synchronous answerer cannot return a usable approval after the deadline', async () => {
+  const captured = harness({ approvalTimeoutMs: 10, approval: () => {
+    // Simulate a provider blocking the timer callback while deciding.
+    const end = Date.now() + 25;
+    while (Date.now() < end) { /* short synchronous provider delay */ }
+    return 'allowed-once';
+  } });
+  const value = await captured.tool.execute({ action: 'stage', all: true }, exec);
+  assert.equal(value.outcome, 'rejected');
+  assert.equal(captured.git.length, 0);
 });

@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runGit, gitEnvironment } from '../lib/git/exec.mjs';
-import { readGitStatus } from '../lib/git/status.mjs';
+import { runGit, gitEnvironment } from './support/git.mjs';
+import { readGitStatus } from './support/git.mjs';
 import { registerGitFlow } from '../lib/flow/register.mjs';
 import { applyGitFlowEvent, initialGitFlowState } from '../lib/flow/state.mjs';
 
